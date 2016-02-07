@@ -25,20 +25,8 @@
 
 -behavior(gen_server).
 
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--endif.
-
--ifndef(TEST).
--define(EJ_SOCKET, ejabberd_socket).
--else.
--define(EJ_SOCKET, test_ejabberd_socket).
--endif.
-
 -include_lib("ejabberd.hrl").
 -include_lib("logger.hrl").
-
--include("ejabberd_sockjs_internal.hrl").
 
 %% API
 -export([
@@ -82,7 +70,7 @@
 ]).
 
 -record(state, {
-	conn :: sockjs_conn(),
+	conn :: tuple(),
 	controller :: pid() | undefined,
 	xml_stream_state,
 	prebuff = [],
@@ -96,16 +84,13 @@
 
 %% API
 
--spec start(sockjs_conn()) -> {ok, pid()}.
 start(Conn) ->
 	gen_server:start(?MODULE, [Conn], []).
 
--spec start_link(sockjs_conn()) -> {ok, pid()}.
 start_link(Conn) ->
 	gen_server:start_link(?MODULE, [Conn], []).
 
 
--spec start_supervised(sockjs_conn()) -> {ok, pid()} | {error, not_started}.
 start_supervised(Conn) ->
     case catch supervisor:start_child(ejabberd_sockjs_sup, [Conn]) of
 	    {ok, Pid} ->
@@ -115,7 +100,6 @@ start_supervised(Conn) ->
 		    {error, not_started}
     end.
 
--spec close(sock()) -> ok.
 close({sockjs, Ref, _Conn}) ->
     gen_server:cast(Ref, stop).
 
@@ -125,7 +109,6 @@ receive_bin(SrvRef, Bin) ->
 
 %% ejabberd_socket callbacks
 
--spec controlling_process(sock(), pid()) -> ok.
 controlling_process({sockjs, Ref, _Conn}, Pid) ->
     gen_server:cast(Ref, {controlling_process, Pid}),
     ok.
@@ -135,28 +118,23 @@ controlling_process({sockjs, Ref, _Conn}, Pid) ->
 change_shaper(_SrvRef, _Shaper) ->
 	ok.
 
--spec sockname(sock()) -> {ok, inet:ip_address(), inet:port_number()}.
 sockname({sockjs, _SrvRef, Conn}) ->
 	Info = sockjs_session:info(Conn),
 	Sockname = proplists:get_value(sockname, Info),
 	{ok, Sockname}.
 
--spec peername(sock()) -> {ok, inet:ip_address(), inet:port_number()}.
 peername({sockjs, _SrvRef, Conn}) ->
 	Info = sockjs_session:info(Conn),
 	Sockname = proplists:get_value(peername, Info),
 	{ok, Sockname}.
 
--spec setopts(sock(), [any()]) -> ok.
 setopts(_Sock, _Opts) ->
 	%% TODO implement {active, once}
 	ok.
 
--spec custom_receiver(sock()) -> {receiver, ?MODULE, pid()}.
 custom_receiver({sockjs, SrvRef, _Conn}) ->
 	{receiver, ?MODULE, SrvRef}.
 
--spec monitor(sock()) -> reference().
 monitor({sockjs, SrvRef, _Conn}) ->
 	erlang:monitor(process, SrvRef).
 
@@ -164,11 +142,9 @@ monitor({sockjs, SrvRef, _Conn}) ->
 become_controller(SrvRef, C2SPid) ->
 	gen_server:cast(SrvRef, {become_controller, C2SPid}).
 
--spec send(sock(), iolist()) -> ok.
 send({sockjs, SrvRef, _Conn}, Out) ->
 	gen_server:cast(SrvRef, {send, Out}).
 
--spec reset_stream(sock()) -> ok.
 reset_stream({sockjs, SrvRef, _Conn}) ->
 	gen_server:cast(SrvRef, reset_stream).
 
@@ -287,156 +263,6 @@ start_app(App) ->
         ok -> ok;
         {error, {already_started, _}} -> ok
     end.
-
-%% EUnit Tests
--ifdef(TEST).
-
-t_sock() ->
-	{ok, Pid} = start(t_con()),
-	t_sock(Pid).
-
-t_sock(Pid) ->
-	{sockjs, Pid, t_con()}.
-
-% t_pid() ->
-% 	spawn_link(fun() -> receive _ -> ok end end).
-
-t_con() ->
-	%% Hmm. or use meck?
-	{sockjs_session,{self(),
-     [{peername,{{127,0,0,1},58105}},
-      {sockname,{{127,0,0,1},8081}},
-      {path,"/sockjs/741/xkeaw5sg/websocket"},
-      {headers,[]}]}}.
-
-start_test() ->
-	erlang:register(ejsock_starter_pid, self()),
-	Sock = t_sock(),
-	SocketInitd = receive
-		{ejsocket, ejabberd_c2s, ?MODULE, Sock, []} -> true;
-		_A -> ?debugVal(_A), false
-	after 100 -> false
-	end,
-	?assert(SocketInitd).
-
-% controlling_process_test() ->
-% 	{setup, fun() ->
-% 		meck:new(ejabberd_socket)
-% 	end, fun() ->
-% 		meck:unload()
-% 	end, [fun() ->
-% 	{ok, Pid} = start(t_con()),
-% 	Sock = t_sock(Pid),
-
-% 	Pid1 = t_pid(),
-% 	Pid2 = t_pid(),
-
-% 	%% Initial set
-% 	?assertEqual(ok, controlling_process(Sock, Pid1)),
-% 	{links, Links} = erlang:process_info(Pid, links),
-% 	?assert(lists:member(Pid1, Links)),
-
-% 	%% Replacement
-% 	?assertEqual(ok, controlling_process(Sock, Pid2)),
-% 	{links, Links2} = erlang:process_info(Pid, links),
-% 	?assert(lists:member(Pid2, Links2)),
-% 	?assert(not lists:member(Pid1, Links2)).
-
-sockname_peername_test() ->
-	Sock = t_sock(),
-
-	?assertEqual({ok, {{127,0,0,1},8081}},
-		sockname(Sock)),
-
-	?assertEqual({ok, {{127,0,0,1},58105}},
-		peername(Sock)).
-
-setopts_test() ->
-	?assertEqual(ok, setopts(t_sock(), [])).
-
-custom_receiver_test() ->
-	{ok, Pid} = start(t_con()),
-	Sock = t_sock(Pid),
-	?assertEqual({receiver, ?MODULE, Pid},
-		custom_receiver(Sock)).
-
-monitor_test() ->
-	Ref = monitor(t_sock()),
-	?assertEqual(true, erlang:demonitor(Ref)).
-
-become_controller_then_rcv_test() ->
-	load_xml_stream(),
-	{_, Pid, _} = t_sock(),
-
-	become_controller(Pid, self()),
-	receive_bin(Pid, <<"<stream>">>),
-
-	?assert(received_start("stream")).
-
-rcv_before_become_controller_test() ->
-	load_xml_stream(),
-	{_, Pid, _} = t_sock(),
-
-	receive_bin(Pid, <<"<stream>">>),
-	become_controller(Pid, self()),
-
-	?assert(received_start("stream")).
-
-send_test() ->
-	Sock = t_sock(),
-	Out = ["hello", <<"world">>],
-
-	send(Sock, Out),
-	Sent = receive
-		{_, {send, Out}} -> true
-	after 100 -> false
-	end,
-
-	?assert(Sent).
-
-reset_test() ->
-	load_xml_stream(),
-	Sock = {_, Pid, _} = t_sock(),
-
-	become_controller(Pid, self()),
-	receive_bin(Pid, <<"<a>">>),
-	reset_stream(Sock),
-	receive_bin(Pid, <<"<b>">>),
-
-	?assert(received_start("a")),
-	?assert(received_start("b")).
-
-%% ejabberd_listener tests
-start_listener_test() ->
-	start_listener({{127, 0, 0, 1}, 9433, tcp}, []),
-	Apps = application:loaded_applications(),
-
-	?assert(is_application_started(cowboy)),
-	?assert(is_application_started(sockjs)),
-
-	%% TODO test actual start - meck?
-
-	ok.
-
-is_application_started(App) ->
-	lists:any(fun({A, _, _}) -> A =:= App end,
-		application:which_applications()).
-
-socket_type_test() ->
-	?assertEqual(independent, socket_type()).
-
-%% Utils
-
-load_xml_stream() ->
-	erl_ddll:load_driver(ejabberd:get_so_path(), expat_erl).
-
-received_start(Name) ->
-	receive
-		{_, {xmlstreamstart,Name, _}} -> true
-	after 100 -> false
-	end.
-
--endif.
 
 parse(Json) ->
     to_event(Json).
