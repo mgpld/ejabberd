@@ -1,6 +1,6 @@
 -module(gtmworker_srv).
 % Created gtmworker_srv.erl the 02:17:02 (16/06/2014) on core
-% Last Modification of gtmworker_srv.erl at 21:08:11 (13/08/2015) on core
+% Last Modification of gtmworker_srv.erl at 23:40:17 (07/02/2016) on sd-19230
 %
 % Author: "rolph" <rolphin@free.fr>
 
@@ -10,7 +10,7 @@
 
 -behaviour(gen_server).
 
--include("logging.hrl").
+-include("logger.hrl").
 
 -export([ 
     start/4, 
