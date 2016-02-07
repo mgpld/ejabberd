@@ -173,6 +173,7 @@ start()
     check_start
     CMD="`shell_escape \"$ERL\" \"$NAME\" \"$ERLANG_NODE\"` \
          -noinput -detached \
+	 -config $ETC_DIR/app \
          $MNESIA_OPTS \
          $KERNEL_OPTS \
          $EJABBERD_OPTS \
@@ -216,6 +217,7 @@ live()
 {
     livewarning
     CMD="`shell_escape \"$ERL\" \"$NAME\" \"${ERLANG_NODE}\"` \
+	 -config $ETC_DIR/app \
          $MNESIA_OPTS \
          $KERNEL_OPTS \
          $EJABBERD_OPTS \
@@ -246,6 +248,7 @@ foreground()
     check_start
     CMD="`shell_escape \"$ERL\" \"$NAME\" \"$ERLANG_NODE\"` \
          -noinput \
+	 -config $ETC_DIR/app \
          $MNESIA_OPTS \
          $KERNEL_OPTS \
          $EJABBERD_OPTS \
