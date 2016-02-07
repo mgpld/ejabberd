@@ -27,6 +27,15 @@
     remove/2
 ]).
 
+%-define(DEBUG,true).
+
+-ifdef(DEBUG).
+-export([
+    test/0,
+    ask/2
+]).
+-endif.
+
 -record(state, {
     childs,
     queue,
@@ -87,7 +96,7 @@ do_poll(_Pid, _, 0) ->
 do_poll(Pid, Fun, Count) ->
     case gen_server:call( Pid, poll, infinity ) of
         {ok, {Operation, {Date, Timeout}, Client} = _Args} ->
-            ?DEBUG("(~p) ** will handle : ~p instance ~p.\n", [ self(), _Args, Count ]),
+            ?DEBUG(?MODULE_STRING "~.p ~p ** will handle : ~p instance ~p.\n", [ ?LINE, self(), _Args, Count ]),
             case expired(Date, Timeout) of
                 false -> 
                     ?DEBUG("(~p) Handle query ~p for client ~p : ~p\n", [ self(), Operation, Client, calendar:now_to_local_time(Date) ]),
@@ -100,14 +109,21 @@ do_poll(Pid, Fun, Count) ->
                     do_poll(Pid, Fun, Count  - 1)
             end;
 
-        {ok, {Operation, Client} = _Args} ->
-            ?DEBUG("(~p) ** will handle : ~p instance ~p.\n", [ self(), _Args, Count ]),
+        {ok, {Operation, Client} = _Args} when is_tuple(Client) ->
+            ?DEBUG(?MODULE_STRING ".~p ~p ** gen_server will handle : ~p instance ~p.\n", [ ?LINE, self(), _Args, Count ]),
             Result = Fun( Operation ),
             gen_server:reply( Client, Result),
             do_poll(Pid, Fun, Count - 1);
 
+        %{ok,[<<"canonical">>,<<"infotree">>,[1001]],<0.6744.0>,100}
+        {ok, Operation, Client, TransId} when is_pid(Client) ->
+            ?DEBUG(?MODULE_STRING ".~p ~p ** plain      will handle : ~p, client: ~p, transid: ~p, round ~p.\n", [ ?LINE, self(), Operation, Client, TransId, Count ]),
+            Result = Fun({call, Operation}),
+            Client ! {db, TransId, Result},
+            do_poll(Pid, Fun, Count - 1);
+
         _Any ->
-            ?DEBUG("(~p) Err: ~p\n", [ self(), _Any ])
+            ?DEBUG(?MODULE_STRING ".~p (~p) Err: ~p\n", [ ?LINE, self(), _Any ])
     end.
 
 % Callback Calls
@@ -122,11 +138,11 @@ handle_call(snap, _From, #state{queries=Q} = State) ->
 handle_call(poll, From, #state{childs=Childs, queue=Q} = State) ->
     case queue:out( Q ) of
         {{value, { _Query, _, _Client } = Args}, NewQ} ->
-            ?DEBUG("Unqueue ~p/~p to ~p\n", [ _Query, _Client, From ]),
+            ?DEBUG(?MODULE_STRING ".~p Unqueue ~p/~p to ~p\n", [ ?LINE, _Query, _Client, From ]),
             {reply, {ok, Args}, State#state{queue=NewQ}};
 
         {empty, _} ->
-            ?DEBUG("Nothing to do: hanging (waiting for client)\n", []),
+            ?DEBUG(?MODULE_STRING ".~p Nothing to do: hanging (waiting for client)\n", [ ?LINE ]),
             {noreply, State#state{ childs= [ From | Childs ] }}
     end;
 
@@ -152,6 +168,11 @@ handle_call(_Query, _Node, State) ->
     {reply, undefined, State}.
 
 % Callback Casts
+handle_cast({Client, [ TransId | Operation ]}, #state{childs=[Child | Rest], queries=Queries} = State) ->
+    ?DEBUG(?MODULE_STRING ".~p handle_cast: TransId: ~p, Operation: ~p", [ ?LINE, TransId, Operation ]),
+    gen_server:reply(Child, {ok, Operation, Client, TransId}), 
+    {noreply, State#state{childs=Rest, queries=Queries+1}};
+
 handle_cast({remove, Child}, #state{childs=Childs} = State) ->
     NewChilds = lists:keydelete( Child, 1, Childs ),
     {noreply, State#state{childs = NewChilds }};
@@ -161,6 +182,7 @@ handle_cast(stop, State) ->
     {stop, Reason, State};
 
 handle_cast(_Msg, State) ->
+    ?DEBUG(?MODULE_STRING ".~p handle_cast Default: ~p", [ ?LINE, _Msg ]),
     {noreply, State}.
 
 % Info
@@ -178,8 +200,75 @@ code_change(_, State, _Vsn) ->
 % internals
 
 answer(Pid, Query, Client) ->
-    %?DEBUG("Sending to ~p: query to ~p for client ~p\n",  [ Pid, Query, Client ]),
+    ?DEBUG("Sending to worker ~p: query: ~p for client ~p\n",  [ Pid, Query, Client ]),
     gen_server:reply( Pid, {ok, {Query, Client}}).
+
+-ifdef(DEBUG).
+ask(Pid, Args) ->
+    %Now = os:timestamp(),
+    {_Time, _Result} = timer:tc( ?MODULE, call, [ Pid, Args ]),
+    ?DEBUG("(~p) ~p us: ~p\n", [ self(), _Time, _Result ]).
+
+test() ->
+    {ok, S} = ?MODULE:start_link(),
+    ?DEBUG("~p: ~p\n", [ ?MODULE, S ]),
+    spawn(?MODULE, ask, [ S, <<"Calling before any one">> ]),
+    spawn(?MODULE, ask, [ S, <<"B1.">> ]),
+    spawn(?MODULE, ask, [ S, <<"B2..">> ]),
+    spawn(?MODULE, ask, [ S, <<"B3...">> ]),
+    spawn(?MODULE, ask, [ S, <<"ahuri">> ]),
+    spawn(?MODULE, ask, [ S, <<"couille">> ]),
+    spawn(?MODULE, ask, [ S, <<"ahuri">> ]),
+    spawn(?MODULE, ask, [ S, <<"Couillu">> ]),
+    spawn(?MODULE, poll, [ S ]),
+    receive after 100 -> ok end,
+    spawn(?MODULE, poll, [ S, fun keyword/1 ]),
+    spawn(?MODULE, poll, [ S, fun keyword/1 ]),
+    receive after 200 -> ok end,
+    spawn(?MODULE, ask, [ S, <<"R1">> ]),
+    spawn(?MODULE, ask, [ S, <<"ahuri debile">> ]),
+    spawn(?MODULE, ask, [ S, <<"bordel bouffon">> ]),
+    spawn(?MODULE, ask, [ S, <<"R3">> ]),
+    spawn(?MODULE, poll, [ S, fun keyword/1 ]),
+    spawn(?MODULE, poll, [ S, fun keyword/1 ]),
+    receive after 200 -> ok end,
+    spawn(?MODULE, poll, [ S, fun keyword/1 ]),
+    receive after 200 -> ok end,
+    spawn(?MODULE, poll, [ S ]),
+    spawn(?MODULE, ask, [ S, <<"R4">> ]),
+    spawn(?MODULE, poll, [ S, fun keyword/1 ]),
+    spawn(?MODULE, poll, [ S, fun keyword/1 ]),
+    spawn(?MODULE, poll, [ S, fun keyword/1 ]),
+    spawn(?MODULE, poll, [ S, fun keyword/1 ]),
+    spawn(?MODULE, poll, [ S, fun keyword/1 ]),
+    spawn(?MODULE, poll, [ S ]),
+    spawn(?MODULE, ask, [ S, <<"R5">> ]),
+    spawn(?MODULE, poll, [ S, fun valve_operations:trim/1 ]),
+    spawn(?MODULE, ask, [ S, <<"R212121212121212121">> ]),
+    spawn(?MODULE, poll, [ S, fun valve_operations:padd/1 ]),
+    spawn(?MODULE, poll, [ S, fun valve_operations:split/1 ]),
+    spawn(?MODULE, ask, [ S, <<"octopus les arrivations">> ]),
+    spawn(?MODULE, poll, [ S, fun reverse/1 ]),
+    receive after 2000 -> ok end,
+    stop(S). 
+    
+keyword({call, Arg}) ->
+    {true, c1@core} ! {1, self(), Arg},
+    receive
+	Result ->
+	    Result
+    after 1000 ->
+	{error, timeout}
+    end;
+keyword(_Msg) ->
+    ?DEBUG("Unhandled msg: ~p\n", [ _Msg ]).
+
+reverse({call, Arg}) when is_binary(Arg) ->
+    {ok, lists:reverse( binary_to_list( Arg ))};
+reverse( Arg ) ->
+    {error, {einval, Arg}}.
+
+-endif.
 
 expired(Date, Timeout) ->
     Diff = timer:now_diff( os:timestamp(), Date ),

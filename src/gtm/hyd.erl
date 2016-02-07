@@ -1,6 +1,6 @@
 -module(hyd).
 % Created hyd.erl the 02:16:47 (06/02/2014) on core
-% Last Modification of hyd.erl at 23:06:38 (30/09/2015) on core
+% Last Modification of hyd.erl at 09:23:00 (03/11/2015) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -10,7 +10,8 @@
     pcall/1,
     reload/1,
     error/2, error/3,
-    operation/3, operation/4
+    operation/3, operation/4,
+    explore/2, explore/3, explore/4, explore/5
 ]).
 
 -export([
@@ -179,4 +180,55 @@ hash_name( Name ) when is_atom(Name) ->
 hash_name( Name ) when is_list(Name) ->
     list_to_binary( [ A || A <- Name, not lists:member(A,"aeiouy_") ]).
 
+% explore generic method
+
+explore(Module, Userid) ->
+    explore(Module, Userid, 50).
+
+explore(Module, Userid, Count) ->
+    explore(Module, Userid, Count, <<"up">>).
+
+explore(Module, Userid, Count, Way) ->
+    explore(Module, Userid, Count, Way, 0).
+
+explore(Module, Userid, Count, Way, From) ->
+    Ops = [
+        hyd:operation(<<"explore">>, Module, [ Userid, Count, Way, From ])
+    ],
+    run(Ops).
+
+run(Op) ->
+    case hyd:call(Op) of
+        {ok, Elements } ->
+            
+            case lists:foldl( fun
+                (_, {error, _} = _Acc) ->
+                    _Acc;
+                ({error, _} = _Error, _) ->
+                    _Error;
+                (X, Acc) ->
+                    case db_results:unpack(X) of
+                        {ok, Result} ->
+                            [ Result | Acc ];
+                        {error, _} = Error ->
+                            Error
+                    end
+                end, [], Elements) of
+
+                    {error, _} = Error ->
+                        Error;
+
+                    Results when is_list(Results) ->
+                        lists:flatten(Results)
+                end;
+            
+        _ ->
+            internal_error(833, Op)
+    end.
+
+internal_error(Code) ->
+    hyd:error(?MODULE, Code).
+
+internal_error(Code, Args) ->
+    hyd:error(?MODULE, Code, Args).
 

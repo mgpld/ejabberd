@@ -1,6 +1,6 @@
 -module(db).
 % Created db.erl the 13:26:07 (02/05/2014) on core
-% Last Modification of db.erl at 23:20:15 (07/02/2016) on sd-19230
+% Last Modification of db.erl at 03:17:43 (20/11/2015) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 

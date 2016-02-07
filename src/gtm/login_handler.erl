@@ -47,7 +47,7 @@ response(<<"POST">>, true, Req, #state{count=Count} = State) ->
     {ok, PostVals, Req2} = cowboy_req:body_qs(Req),
     ?DEBUG(?MODULE_STRING " PostVals: ~p", [ PostVals ]),
     Id = grab(<<"id">>, PostVals),
-    %Token = grab(<<"token">>, PostVals),
+    Token = grab(<<"token">>, PostVals),
     UserInfos = hyd_users:internal(Id),
     {ok, Req3} = cowboy_req:reply(200, [
         {<<"content-type">>, <<"application/json">>}

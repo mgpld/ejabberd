@@ -1,6 +1,6 @@
 -module(hyd_users).
 % Created hyd_users.erl the 17:16:36 (12/10/2013) on core
-% Last Modification of hyd_users.erl at 17:19:31 (05/02/2016) on sd-19230
+% Last Modification of hyd_users.erl at 03:19:21 (20/11/2015) on core
 %
 % Author: rolph
 % Harmony Data - Users

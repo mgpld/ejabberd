@@ -1,6 +1,6 @@
 -module(hyd_fqids).
 % Created hyd_fqids.erl the 02:14:53 (06/02/2014) on core
-% Last Modification of hyd_fqids.erl at 09:16:53 (29/05/2015) on core
+% Last Modification of hyd_fqids.erl at 09:15:17 (20/11/2015) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -12,6 +12,10 @@
     read/1, read/2,
     args/2, args/3,
     action/3
+]).
+
+-export([
+    action_async/4
 ]).
 
 -ifdef(TEST).
@@ -120,6 +124,18 @@ action(Any, Action, Args) ->
         hyd:operation(<<"action">>, module(), [ Any, Action | FilteredArgs ])
     ],
     run(Op).
+
+% asynchronous version of action
+action_async(TransId, Type, <<"create">>, Args) ->
+    FilteredArgs = lists:map(fun hyd:quote/1, Args),
+    db:cast(TransId, <<"create">>, module(), [ Type | FilteredArgs ]);
+
+action_async(TransId, Any, Action, Args) ->
+    FilteredArgs = lists:map(fun hyd:quote/1, Args),
+    db:cast(TransId, <<"action">>, module(), [ Any, Action | FilteredArgs ]).
+
+    %db:cast(100, <<"create">>,<<"fqids">>,[<<"article">>,[<<"1002">>,<<"!0003963828424TjwOyqDMPt0Kiw63828G9611">>,<<"My new idea of the day !">>,<<"Several environment variables control the operation of GT.M. Some of them must be set up for normal operation, where as for others GT.M assumes a default value if they are not set.">>,<<>>]]).
+
 
 -spec run(
     Op :: [ tuple() ] ) -> list() | {error, term()}.
