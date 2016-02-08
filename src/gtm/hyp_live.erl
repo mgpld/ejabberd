@@ -1,6 +1,6 @@
 -module(hyp_live).
 % Created hyp_live.erl the 13:33:37 (01/01/2015) on core
-% Last Modification of hyp_live.erl at 20:27:25 (08/02/2016) on sd-19230
+% Last Modification of hyp_live.erl at 21:08:36 (08/02/2016) on sd-19230
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -48,7 +48,6 @@
 
 % fsm states
 -export([
-    init/2, init/3,
     enroll/2, enroll/3,
     normal/2, normal/3,
     locked/2, locked/3
@@ -158,8 +157,6 @@ init([ Id, Host, Creator, Ref, Module]) ->
     },
     prepare(undefined, State).
 
-    %{ok, init, State, 0}.
-
 
 handle_info(_Info, StateName, State) ->
     fsm_next_state(StateName, State).
@@ -183,64 +180,6 @@ terminate(_Reason, _StateName, _State) ->
 
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State, ?INACTIVITY_TIMEOUT}.
-
-%% init/2
-init(timeout, #state{ roomref=Fqid, creator=_Userid, users=Users } = State) ->
-    case hyp_data:execute(hyd_fqids, read, [Fqid]) of
-        {ok, Props} ->
-            case hyp_data:extract([<<"api">>,<<"type">>], Props) of 
-                undefined ->
-                    {stop, enoent};
-                Type ->
-                    init(Type, State)
-            end;
-
-        {error, Error} ->
-            {stop, Error}
-    end;
-
-init(Type, #state{ roomref=Fqid, creator=Userid, users=Users } = State) when 
-    Type =:= <<"group">>;
-    Type =:= <<"thread">> ->
-
-    case hyp_data:action(Userid, Fqid, <<"members">>, []) of
-
-        {ok, {_Infos, Subscriber}} when is_binary(Subscriber) ->
-            NewUsers = gb_trees:enter(Subscriber, undefined, Users),
-            fsm_next_state(normal, State#state{ users=NewUsers });
-
-        {ok, {_Infos, Subscribers}} when is_list(Subscribers) ->
-            NewUsers = lists:foldl( fun( Id, Tree ) ->
-                gb_trees:enter(Id, undefined, Tree)
-            end, Users, Subscribers),
-            fsm_next_state(normal, State#state{ users=NewUsers });
-    
-        {error, Error} ->
-            {stop, Error}
-    end;
-
-init(Type, #state{ roomref=Fqid,  creator=_Userid, users=Users } = State) when 
-    Type =:= <<"drop">> ->
-
-    case hyp_data:execute(hyd_fqids, read, [Fqid]) of
-        {ok, Props} ->
-            case hyp_data:extract([<<"info">>,<<"parent">>], Props) of 
-                undefined ->
-                    {stop, enoent};
-                ParentFqid ->
-                    NewState = State#state{ roomref=ParentFqid },
-                    init(timeout, NewState)
-            end;
-
-        {error, Error} ->
-            {stop, Error}
-    end.
-
-
-
-%% init/3
-init(_, _, State) ->
-    fsm_next_state(init, State).
 
 %% STATE enroll
 %% enroll/2
@@ -332,45 +271,31 @@ test() ->
 	stop(A).
 -endif.
 
-% transaction(Fun) ->
-% 	case mnesia:transaction(Fun) of
-% 		{atomic, []} ->
-% 			{ok, enoent};
-% 		{aborted, Reason} ->
-% 			?ERROR_MSG("Transaction error: ~p\n", [ Reason ]),
-% 			{error, Reason};
-% 		{atomic, Any} ->
-% 			%info_msg("Atomic: ~p\n", [ Any ]),
-% 			{ok, Any};
-% 		_A ->
-% 			%info_msg("Transaction: ~p\n", [ _A ]),
-% 			_A
-% 	end.
-
-% hash(GameId, JidHash) ->
-% 	erlang:phash2([ GameId, JidHash ]).
-
 %% FIXME Message should be split to only content and ignore signaling info;
 %% from, to, type
 %% Purpose Id must be incorporated in the final packet sent to users
-send_message(Message, #state{ roomref=Ref, host=Host, mod=Module, users=Users, cid=Id } = _State) ->
-    Jids = gb_trees:keys(Users),
-    lists:foreach( fun( User ) ->
-        To = iolist_to_binary([User,<<"@">>,Host]),
-        From = iolist_to_binary([<<"chat@harmony/">>, Ref]),
-        Msgid = iolist_to_binary([Ref, $. , integer_to_list(Id)]),
-        Packet = {chat, {Msgid, Message}},
-        ?DEBUG(?MODULE_STRING " send_message: Module: ~p from: ~p to: ~p\n~p\n", [ Module, From, To, Packet ]), 
-        Module:route(From, To, Packet )
-    end, Jids).
+send_message(Message, #state{ roomref=Ref, users=Users, cid=Id } = State) ->
+    From = iolist_to_binary([<<"chat@harmony/">>, Ref]),
+    Msgid = iolist_to_binary([Ref, $. , integer_to_list(Id)]),
+    Iter = gb_trees:iterator(Users),
+    publish(gb_trees:next(Iter), Msgid, From, Message, State).
 
+% send_message(Message, #state{ roomref=Ref, host=Host, mod=Module, users=Users, cid=Id } = _State) ->
+%     Jids = gb_trees:keys(Users),
+%     lists:foreach( fun( User ) ->
+%         To = iolist_to_binary([User,<<"@">>,Host]),
+%         From = iolist_to_binary([<<"chat@harmony/">>, Ref]),
+%         Msgid = iolist_to_binary([Ref, $. , integer_to_list(Id)]),
+%         Packet = {chat, {Msgid, Message}},
+%         ?DEBUG(?MODULE_STRING " send_message: Module: ~p from: ~p to: ~p\n~p\n", [ Module, From, To, Packet ]), 
+%         Module:route(From, To, Packet )
+%     end, Jids).
+% 
 fsm_next_state(StateName, #state{ inactivity_timeout = Timeout } = State) ->
     {next_state, StateName, State, Timeout}.
 
 newcid() ->
     Now = os:timestamp(),
-    %CountryCode = "33",
-    %Cid = CountryCode ++ lists:concat(tuple_to_list(Now)),
     Cid = lists:concat(tuple_to_list(Now)),
     list_to_integer(Cid).
 
@@ -387,16 +312,8 @@ options(State, Message, [{expire, Timer}| Options ]) ->
 options(State, Message, [ _| Options]) ->
     options(State, Message, Options).
 
-% get_from_packet(type, {struct, [{Type, _}]}) ->
-%     Type;
-% get_from_packet(args, {struct, [{_Type, {struct, Args}} |_ ]}) ->
-%     Args;
-% get_from_packet(_What, _Packet) ->
-%     [].
-
-
 %% prepare/2
-prepare(undefined, #state{ roomref=Fqid, creator=_Userid, users=Users } = State) ->
+prepare(undefined, #state{ roomref=Fqid, creator=_Userid, users=_Users } = State) ->
     case hyp_data:execute(hyd_fqids, read, [Fqid]) of
         {ok, Props} ->
             case hyp_data:extract([<<"api">>,<<"type">>], Props) of 
@@ -430,7 +347,7 @@ prepare(Type, #state{ roomref=Fqid, creator=Userid, users=Users } = State) when
             {stop, Error}
     end;
 
-prepare(Type, #state{ roomref=Fqid,  creator=_Userid, users=Users } = State) when 
+prepare(Type, #state{ roomref=Fqid,  creator=_Userid, users=_Users } = State) when 
     Type =:= <<"drop">> ->
 
     case hyp_data:execute(hyd_fqids, read, [Fqid]) of
@@ -447,7 +364,18 @@ prepare(Type, #state{ roomref=Fqid,  creator=_Userid, users=Users } = State) whe
             {stop, Error}
     end;
 
-prepare(Type, #state{ roomref=Fqid,  creator=_Userid, users=Users } = State) ->
+prepare(Type, _State) ->
     ?DEBUG( ?MODULE_STRING "[~5w] Unhandled live process for type: ~p", [ ?LINE, Type ]),
     {stop, einval}.
+
+% send realtime message about this new message
+publish(none, _, _, _, _) ->
+    ok;
+publish({User, _, Iter}, Msgid, From, Message, #state{ host=Host, mod=Module } = State) ->
+    To = iolist_to_binary([User,<<"@">>,Host]),
+    Packet = {chat, {Msgid, Message}},
+    ?DEBUG(?MODULE_STRING "[~5w] send_message: Module: ~p from: ~p to: ~p", [ ?LINE, Module, From, To ]), 
+    Module:route(From, To, Packet ),
+    publish(gb_trees:next(Iter), Msgid, From, Message, State).
+
 

@@ -1,6 +1,6 @@
 -module(hyp_persist).
 % Created hyp_persist.erl the 12:35:09 (04/11/2015) on core
-% Last Modification of hyp_persist.erl at 16:07:45 (08/02/2016) on sd-19230
+% Last Modification of hyp_persist.erl at 20:49:27 (08/02/2016) on sd-19230
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -320,9 +320,10 @@ prepare(Type, #state{ roomref=Fqid,  creator=_Userid, users=_Users } = State) wh
 
         {error, Error} ->
             {stop, Error}
-    end.
-
-% send_message(Message, #state{ roomref=Ref, host=Host, mod=Module, users=Users, cid=Id } = _State) ->
+    end;
+prepare(Type, _State) ->
+    ?DEBUG( ?MODULE_STRING "[~5w] Unhandled persist process for type: ~p", [ ?LINE, Type ]),
+    {stop, einval}.
 
 % store message in user newsfeed 
 % send realtime message about this new message
