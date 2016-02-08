@@ -1,6 +1,6 @@
 -module(hyp_live).
 % Created hyp_live.erl the 13:33:37 (01/01/2015) on core
-% Last Modification of hyp_live.erl at 15:00:30 (08/02/2016) on sd-19230
+% Last Modification of hyp_live.erl at 20:27:25 (08/02/2016) on sd-19230
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -445,5 +445,9 @@ prepare(Type, #state{ roomref=Fqid,  creator=_Userid, users=Users } = State) whe
 
         {error, Error} ->
             {stop, Error}
-    end.
+    end;
+
+prepare(Type, #state{ roomref=Fqid,  creator=_Userid, users=Users } = State) ->
+    ?DEBUG( ?MODULE_STRING "[~5w] Unhandled live process for type: ~p", [ ?LINE, Type ]),
+    {stop, einval}.
 
