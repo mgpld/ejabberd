@@ -3901,6 +3901,9 @@ handle_message(Message, _From, _To, _) ->
 
 userid(State, User, Server) ->
     case data_specific(State, hyd_users, userid, [User,Server]) of
+        [] ->
+            {error, invalid};
+
         {ok, []} ->
             {error, invalid};
 
