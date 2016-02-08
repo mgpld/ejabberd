@@ -548,6 +548,12 @@ authorized({action, SeqId, Args}, StateData) ->
                             Answer = make_answer(SeqId, 200, Result),
                             send_element(StateData, (Answer)),
                             delivered_notification( StateData, Id, Result),
+                            fsm_next_state(authorized, StateData);
+
+                        [] ->
+                            ?ERROR_MSG(?MODULE_STRING "[~5w] 'info': returns empty for ~p", [ ?LINE, Id ]),
+                            Answer = make_answer_not_found(SeqId),
+                            send_element(StateData, (Answer)),
                             fsm_next_state(authorized, StateData)
                     end
             end;
@@ -608,7 +614,6 @@ authorized({action, SeqId, Args}, StateData) ->
                                 fsm_next_state(authorized, NewStateData);
 
                             ok ->
-                                ?DEBUG(?MODULE_STRING " handle_configuration: set operation: ~p", [ ok ]),
                                 Answer = make_answer(SeqId, [{<<"result">>, <<"ok">>}]),
                                 send_element(NewStateData, (Answer)),
                                 fsm_next_state(authorized, NewStateData);
@@ -903,7 +908,7 @@ authorized({action, SeqId, Args}, StateData) ->
             end;
 
         Type ->
-            ?ERROR_MSG(?MODULE_STRING " Unhandled action: ~p\n~p", [Type, Args]),
+            ?ERROR_MSG(?MODULE_STRING "[~5w] Unhandled action: ~p\n~p", [ ?LINE, Type, Args]),
             fsm_next_state(authorized, StateData)
 
     end;
@@ -1011,7 +1016,7 @@ authorized({invite, _SeqId, Args}, StateData) ->
                     case get_user_pids(ToUser, ToServer) of
                         [] ->
                             %User is no longer connected.
-                            ?DEBUG(?MODULE_STRING " User is not available: ~p@~p", [ ToUser, ToServer ]),
+                            ?DEBUG(?MODULE_STRING "[~5w] User is not available: ~p@~p", [ ?LINE, ToUser, ToServer ]),
                             fsm_next_state(authorized, StateData);
 
                         Sessions ->
@@ -1044,7 +1049,7 @@ authorized({invite, _SeqId, Args}, StateData) ->
 end;
 
 authorized({Command, SeqId, Args}, StateData) ->
-    ?ERROR_MSG(?MODULE_STRING " UNHANDLED: Command: ~p, Args: ~p", [ Command, Args ]),
+    ?ERROR_MSG(?MODULE_STRING "[~5w] UNHANDLED: Command: ~p, Args: ~p", [?LINE, Command, Args ]),
     Answer = make_answer(SeqId, [{<<"code">>, 404}, {<<"status">>, <<"ok">>}]),
     send_element(StateData, (Answer)),
     fsm_next_state(authorized, StateData);
@@ -1060,7 +1065,7 @@ authorized(closed, StateData) ->
     {stop, normal, StateData};
 
 authorized(Any, StateData) ->
-    ?ERROR_MSG(?MODULE_STRING "authorized Unhandled: ~p", [ Any ]),
+    ?ERROR_MSG(?MODULE_STRING "[~5w] authorized Unhandled: ~p", [?LINE, Any ]),
     fsm_next_state(authorized, StateData).
 
 %%----------------------------------------------------------------------
@@ -1156,7 +1161,7 @@ handle_info({send_text, Text}, StateName, StateData) ->
 
 %% Process Packets that are to be send to the user
 handle_info({route, From, To, Message}, StateName, StateData) ->
-    ?DEBUG(?MODULE_STRING " route (~p) from: ~p, To: ~p, message: ~p", [ StateName, From, To, Message ]),
+    ?DEBUG(?MODULE_STRING "[~5w] route (~p) from: ~p, To: ~p, message: ~p", [?LINE, StateName, From, To, Message ]),
     case handle_message(Message, From, To, StateData) of
         {ok, Packet} ->
             send_element(StateData, Packet),
@@ -1170,7 +1175,7 @@ handle_info({presence, To, Args}, StateName, StateData) ->
     PacketArgs = [ {<<"action">>, <<"here">>} ] ++ Args,
     Data = make_packet(StateData, Type, PacketArgs),
     Packet = (Data),
-    ?DEBUG(?MODULE_STRING "route presence to pid: ~p: ~p", [ To, iolist_to_binary(Packet) ]),
+    ?DEBUG(?MODULE_STRING "[~5w] route presence to pid: ~p: ~p", [?LINE, To, iolist_to_binary(Packet) ]),
     To ! {route, undefined, undefined, Packet},
     fsm_next_state(StateName, StateData);
 
@@ -1201,11 +1206,11 @@ handle_info({status, Sender, {Userid, Username}, _FromNick}, StateName, StateDat
 % Send this information to frontend
 handle_info({status, Userid, Username, Status}, StateName, StateData) ->
 
-    %?DEBUG(?MODULE_STRING " [~p][STATUS] Received presence from ~p (~p), Status: ~p", [ StateData#state.user, Username, Userid, Status ]),
+    %?DEBUG(?MODULE_STRING "[~5w] [~p][STATUS] Received presence from ~p (~p), Status: ~p", [?LINE, StateData#state.user, Username, Userid, Status ]),
 
     Data = make_presence( StateData, Userid, Username, Status ),
 
-    % ?DEBUG(?MODULE_STRING " [~p][STATUS] A Presence packet: ~p", [ StateData#state.user, Data ]),
+    % ?DEBUG(?MODULE_STRING "[~5w] [~p][STATUS] A Presence packet: ~p", [?LINE, StateData#state.user, Data ]),
 
     Packet = (Data),
     send_element(StateData, Packet),
@@ -1222,11 +1227,11 @@ handle_info({db, SeqId, Result}, StateName, #state{aux_fields=Actions} = State) 
     %?DEBUG(?MODULE_STRING ".~p DB: SeqId: ~p, Result: ~p", [ ?LINE, SeqId, Result ]),
     case Result of 
         [<<>>] ->
-            ?DEBUG(?MODULE_STRING ".~p DB: SeqId: ~p, Error: '~p'", [ ?LINE, SeqId, <<>> ]),
+            ?DEBUG(?MODULE_STRING "[~5w] DB: SeqId: ~p, Error: '~p'", [ ?LINE, SeqId, <<>> ]),
             fsm_next_state(StateName, State);
 
         {error, _} = Error ->
-            ?DEBUG(?MODULE_STRING ".~p DB: SeqId: ~p, Error: ~p", [ ?LINE, SeqId, Error ]),
+            ?DEBUG(?MODULE_STRING "[~5w] DB: SeqId: ~p, Error: ~p", [ ?LINE, SeqId, Error ]),
             fsm_next_state(StateName, State);
 
         {ok, Response} ->  % there is many response or a complex response
@@ -1252,12 +1257,12 @@ handle_info({db, SeqId, Result}, StateName, #state{aux_fields=Actions} = State) 
                             end;
 
                         {error, _} = Error ->
-                            ?DEBUG(?MODULE_STRING ".~p DB: SeqId: ~p, Error: ~p", [ ?LINE, SeqId, Error ]),
+                            ?DEBUG(?MODULE_STRING "[~5w] DB: SeqId: ~p, Error: ~p", [ ?LINE, SeqId, Error ]),
                             fsm_next_state(StateName, State)
                     end;
 
                 {error, _} = Error ->
-                    ?DEBUG(?MODULE_STRING ".~p DB: SeqId: ~p, Error: ~p", [ ?LINE, SeqId, Error ]),
+                    ?DEBUG(?MODULE_STRING "[~5w] DB: SeqId: ~p, Error: ~p", [ ?LINE, SeqId, Error ]),
                     fsm_next_state(StateName, State)
             end
     end;
