@@ -411,6 +411,8 @@ handle_call({create, RoomId, From, RoomRef, Opts}, _From,
                     ?ERROR_MSG(?MODULE_STRING "[~5w] HYP_LIVE: FAIL create new room for type ~p (~p) mod: ~p", [ ?LINE, RoomRef, RoomId, Module]),
                     {reply, ok, State}
 
+            end;
+
         {ok, _Pid} ->
             {reply, ok, State}
     end.
