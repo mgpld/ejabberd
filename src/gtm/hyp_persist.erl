@@ -1,6 +1,6 @@
 -module(hyp_persist).
 % Created hyp_persist.erl the 12:35:09 (04/11/2015) on core
-% Last Modification of hyp_persist.erl at 16:01:08 (08/02/2016) on sd-19230
+% Last Modification of hyp_persist.erl at 16:06:22 (08/02/2016) on sd-19230
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -47,7 +47,6 @@
 
 % fsm states
 -export([
-    % init/2, init/3,
     enroll/2, enroll/3,
     normal/2, normal/3,
     locked/2, locked/3
@@ -76,12 +75,6 @@
     inactivity_timeout
 }).
 
-
-debug_link( Id ) ->
-    Options = [
-        {debug, [{log_to_file, ?MODULE_STRING ++ ".log"}]
-    }],
-    gen_fsm:start_link(?MODULE, [Id], Options).
 
 start_link(Type, Module, RoomRef ) ->
     gen_fsm:start_link(?MODULE, [Type, Module, RoomRef], []).
@@ -155,9 +148,6 @@ init([ Type, Host, Creator, Ref, Module]) ->
     },
     prepare(Type, State).
 
-    %{ok, init, State, 0}.
-
-
 handle_info(_Info, StateName, State) ->
     fsm_next_state(StateName, State).
   
@@ -180,67 +170,6 @@ terminate(_Reason, _StateName, _State) ->
 
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State, ?INACTIVITY_TIMEOUT}.
-
-%% init/2
-init(timeout, #state{ roomref=Fqid, creator=_Userid, users=Users } = State) ->
-    case hyp_data:execute(hyd_fqids, read, [Fqid]) of
-        {ok, Props} ->
-            case hyp_data:extract([<<"api">>,<<"type">>], Props) of 
-                undefined ->
-                    {stop, enoent};
-                Type ->
-                    init(Type, State)
-            end;
-
-        {error, Error} ->
-            {stop, Error}
-    end;
-
-init(_, _) ->
-    {stop, einval}.
-
-% init(Type, #state{ roomref=Fqid, creator=Userid, users=Users } = State) when 
-%     Type =:= <<"group">>;
-%     Type =:= <<"thread">> ->
-% 
-%     case hyp_data:action(Userid, Fqid, <<"members">>, []) of
-% 
-%         {ok, {_Infos, Subscriber}} when is_binary(Subscriber) ->
-%             NewUsers = gb_trees:enter(Subscriber, undefined, Users),
-%             fsm_next_state(normal, State#state{ users=NewUsers });
-% 
-%         {ok, {_Infos, Subscribers}} when is_list(Subscribers) ->
-%             NewUsers = lists:foldl( fun( Id, Tree ) ->
-%                 gb_trees:enter(Id, undefined, Tree)
-%             end, Users, Subscribers),
-%             fsm_next_state(normal, State#state{ users=NewUsers });
-%     
-%         {error, Error} ->
-%             {stop, Error}
-%     end;
-
-%init(Type, #state{ roomref=Fqid,  creator=_Userid, users=Users } = State) when 
-%    Type =:= <<"drop">> ->
-%
-%    case hyp_data:execute(hyd_fqids, read, [Fqid]) of
-%        {ok, Props} ->
-%            case hyp_data:extract([<<"info">>,<<"parent">>], Props) of 
-%                undefined ->
-%                    {stop, enoent};
-%                ParentFqid ->
-%                    NewState = State#state{ roomref=ParentFqid },
-%                    init(timeout, NewState)
-%            end;
-%
-%        {error, Error} ->
-%            {stop, Error}
-%    end.
-%
-
-
-%% init/3
-% init(_, _, State) ->
-%     fsm_next_state(init, State).
 
 %% STATE enroll
 %% enroll/2
@@ -325,8 +254,6 @@ fsm_next_state(StateName, #state{ inactivity_timeout = Timeout } = State) ->
 
 newcid() ->
     Now = os:timestamp(),
-    %CountryCode = "33",
-    %Cid = CountryCode ++ lists:concat(tuple_to_list(Now)),
     Cid = lists:concat(tuple_to_list(Now)),
     list_to_integer(Cid).
 
@@ -343,16 +270,8 @@ options(State, Message, [{expire, Timer}| Options ]) ->
 options(State, Message, [ _| Options]) ->
     options(State, Message, Options).
 
-% get_from_packet(type, {struct, [{Type, _}]}) ->
-%     Type;
-% get_from_packet(args, {struct, [{_Type, {struct, Args}} |_ ]}) ->
-%     Args;
-% get_from_packet(_What, _Packet) ->
-%     [].
-
-
 %% prepare/2
-prepare(undefined, #state{ roomref=Fqid, creator=_Userid, users=Users } = State) ->
+prepare(undefined, #state{ roomref=Fqid, creator=_Userid, users=_Users } = State) ->
     case hyp_data:execute(hyd_fqids, read, [Fqid]) of
         {ok, Props} ->
             case hyp_data:extract([<<"api">>,<<"type">>], Props) of 
@@ -373,10 +292,6 @@ prepare(Type, #state{ roomref=Fqid, creator=Userid, users=Users } = State) when
 
     case hyp_data:action(Userid, Fqid, <<"members">>, []) of
 
-        %{ok, {_Infos, Subscriber}} when is_binary(Subscriber) ->
-        %    NewUsers = gb_trees:enter(Subscriber, undefined, Users),
-        %    {ok, normal, State#state{ users=NewUsers }};
-
         {ok, {_Infos, Subscribers}} when is_list(Subscribers) ->
             NewUsers = lists:foldl( fun( {Id, Newsfeed}, Tree ) ->
                 gb_trees:enter(Id, Newsfeed, Tree)
@@ -390,7 +305,7 @@ prepare(Type, #state{ roomref=Fqid, creator=Userid, users=Users } = State) when
             {stop, Error}
     end;
 
-prepare(Type, #state{ roomref=Fqid,  creator=_Userid, users=Users } = State) when 
+prepare(Type, #state{ roomref=Fqid,  creator=_Userid, users=_Users } = State) when 
     Type =:= <<"drop">> ->
 
     case hyp_data:execute(hyd_fqids, read, [Fqid]) of
@@ -417,7 +332,7 @@ publish({User, Newsfeed, Iter}, Child, Msgid, From, Message, #state{ host=Host, 
     To = iolist_to_binary([User,<<"@">>,Host]),
     Packet = {chat, {Msgid, Message}},
     hyd_fqids:action(Newsfeed,<<"addChild">>,[User,Child]),
-    ?DEBUG(?MODULE_STRING ".~p send_message: Module: ~p from: ~p to: ~p", [ ?LINE, Module, From, To ]), 
+    ?DEBUG(?MODULE_STRING "[~5w] send_message: Module: ~p from: ~p to: ~p", [ ?LINE, Module, From, To ]), 
     Module:route(From, To, Packet ),
     publish(gb_trees:next(Iter), Child, Msgid, From, Message, State).
 
