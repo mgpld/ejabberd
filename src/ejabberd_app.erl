@@ -61,6 +61,7 @@ start(normal, _Args) ->
     shaper:start(),
     connect_nodes(),
     Sup = ejabberd_sup:start_link(),
+    gtm:start(),
     ejabberd_rdbms:start(),
     ejabberd_riak_sup:start(),
     ejabberd_sm:start(),
