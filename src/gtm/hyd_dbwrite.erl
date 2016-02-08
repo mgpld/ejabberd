@@ -1,6 +1,6 @@
 -module(hyd_dbwrite).
 % Created hyd_dbwrite.erl the 12:25:51 (26/01/2016) on core
-% Last Modification of hyd_dbwrite.erl at 11:31:53 (08/02/2016) on sd-19230
+% Last Modification of hyd_dbwrite.erl at 11:34:18 (08/02/2016) on sd-19230
 % 
 % Author: "rolph" <ak@harmonygroup.net>
 
@@ -33,7 +33,7 @@ udp_recv(Socket, Addr, Port, Packet, Opts) ->
             handle_packet(Socket, Addr, Port, Packet, Opts)
     end).
 
-start(Opaque, Opts) ->
+start(_Opaque, _Opts) ->
     ok.
 
 socket_type() ->
@@ -42,7 +42,7 @@ socket_type() ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-handle_packet(Socket, Addr, Port, Packet, Opts) ->
+handle_packet(_Socket, _Addr, Port, Packet, Opts) ->
     ?DEBUG(?MODULE_STRING ".(~p) Packet: ~p, Opts: ~p", [ ?LINE, Packet, Opts ]),
     [ Head | Args ] = binary:split(Packet, <<" ">>),
     [ <<>>, Domain, Method | _ ] = binary:split(Head,<<"/">>, [global,trim]),
