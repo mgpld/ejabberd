@@ -3921,10 +3921,7 @@ data_specific(#state{db=Db, sid=_Sid, user=Username, server=_Server}, Module, Fu
     ?DEBUG(?MODULE_STRING " [~s (~p|~p)] data_specific: Db: ~p  apply(~p, ~p, ~p)", [ 
         Username, seqid(), _Sid,
         Db, Module, Function, Args ]),
-    %Result = rpc:call(Db, Module, Function, Args),
-    %Result = rpc:call(Db, Module, Function, Args, 1000), % make timeout configurable ?
     Result = apply(Module, Function, Args), % slowest call possible :)
-    %?DEBUG(?MODULE_STRING " [~s (~p|~p)] data_specific: Result: ~p", [ Username, seqid(), _Sid, Result ]),
     case Result of 
         {badrpc, Reason} ->
             {error, Reason};
@@ -3957,7 +3954,7 @@ data_specific(#state{db=Db, sid=_Sid, user=Username, server=_Server}, Module, Fu
             Response;
 
         Any -> %% Error are assumed to be catched earlier
-            ?ERROR_MSG(?MODULE_STRING " [~s (~p|~p)] data_specific: backend catchall: ~p", [ Username, seqid(), _Sid, Any ]),
+            ?DEBUG(?MODULE_STRING " [~s (~p|~p)] data_specific: backend catchall: ~p", [ Username, seqid(), _Sid, Any ]),
             {ok, Any}
     end.
 
