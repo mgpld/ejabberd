@@ -1,6 +1,6 @@
 -module(hyp_persist).
 % Created hyp_persist.erl the 12:35:09 (04/11/2015) on core
-% Last Modification of hyp_persist.erl at 16:06:22 (08/02/2016) on sd-19230
+% Last Modification of hyp_persist.erl at 16:07:45 (08/02/2016) on sd-19230
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -241,7 +241,7 @@ route(From, To, Message) ->
 %% FIXME Message should be split to only content and ignore signaling info;
 %% from, to, type
 %% Purpose Id must be incorporated in the final packet sent to users
-send_message(Message, #state{ roomref=Ref, host=Host, mod=Module, users=Users, cid=Id } = State) ->
+send_message(Message, #state{ roomref=Ref, users=Users, cid=Id } = State) ->
     Child = hyp_data:extract([<<"message">>,<<"child">>], Message),
     From = iolist_to_binary([<<"chat@harmony/">>, Ref]),
     Msgid = iolist_to_binary([Ref, $. , integer_to_list(Id)]),
