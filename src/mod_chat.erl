@@ -402,9 +402,15 @@ handle_call({create, RoomId, From, RoomRef, Opts}, _From,
             IdentFun = fun(A) -> A end,
             Module = gen_mod:get_opt(module, Opts, IdentFun, ?MODULE),
             ?DEBUG(?MODULE_STRING " HYP_LIVE: create new room from user ~p: '~s' (~p) mod: ~p", [ From, RoomRef, RoomId, Module]),
-            {ok, Pid} = hyp_live:start_link(RoomId, ServerHost, From, RoomRef, Module),
-            register_room(Host, RoomRef, Pid),
-            {reply, ok, State};
+            case hyp_live:start_link(RoomId, ServerHost, From, RoomRef, Module) of
+                {ok, Pid} ->
+                    register_room(Host, RoomRef, Pid),
+                    {reply, ok, State};
+
+                {error, Reason} ->
+                    ?ERROR_MSG(?MODULE_STRING "[~5w] HYP_LIVE: FAIL create new room for type ~p (~p) mod: ~p", [ ?LINE, RoomRef, RoomId, Module]),
+                    {reply, ok, State}
+
         {ok, _Pid} ->
             {reply, ok, State}
     end.
