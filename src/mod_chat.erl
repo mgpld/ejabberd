@@ -403,8 +403,6 @@ handle_call({create, RoomId, From, RoomRef, Opts}, _From,
             Module = gen_mod:get_opt(module, Opts, IdentFun, ?MODULE),
             ?DEBUG(?MODULE_STRING " HYP_LIVE: create new room from user ~p: '~s' (~p) mod: ~p", [ From, RoomRef, RoomId, Module]),
             {ok, Pid} = hyp_live:start_link(RoomId, ServerHost, From, RoomRef, Module),
-            % {ok, Pid} = muc_room:start_link(RoomId, From, RoomRef, Module),
-            % muc_room:normal(Pid), % going to normal mode 
             register_room(Host, RoomRef, Pid),
             {reply, ok, State};
         {ok, _Pid} ->
