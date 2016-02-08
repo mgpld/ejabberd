@@ -530,7 +530,36 @@ do_route(From, To, #xmlel{} = Packet) ->
 		?DEBUG("sending to process ~p~n", [Pid]),
 		Pid ! {route, From, To, Packet}
 	  end
-    end.
+    end;
+do_route(From, To, {Type, _} = Packet) ->
+    ?DEBUG(?MODULE_STRING " Handling packet of Type: ~p\n~p\n", [ Type, Packet ]),
+    case To#jid.lresource of
+        <<>> ->
+            lists:foreach(fun(R) ->
+                do_route(From, jid:replace_resource(To, R), Packet)
+            end,
+            get_user_resources(To#jid.user, To#jid.server));
+
+        _ ->
+            %USR = jlib:jid_tolower(To),
+            %case mnesia:dirty_index_read(session, USR, #session.usr) of
+
+            {U, S, R} = jid:tolower(To),
+	    Mod = get_sm_backend(),
+	    case Mod:get_sessions(U, S, R) of
+                [] ->
+                    ?DEBUG(?MODULE_STRING " packet dropped, jid ~p not found", [To]);
+                Ss ->
+                    Session = lists:max(Ss),
+                    Pid = element(2, Session#session.sid),
+                    ?DEBUG(?MODULE_STRING " sending to process ~p ~p", [Pid, To]),
+                    Pid ! {route, From, To, Packet}
+            end
+    end;
+
+do_route(From, To, Packet) ->
+    ?ERROR_MSG(?MODULE_STRING " Handling packet from ~p, to ~p of unknown type: ~p\n~p\n", [ From, To, Packet ]),
+    ok.
 
 %% The default list applies to the user as a whole,
 %% and is processed if there is no active list set
