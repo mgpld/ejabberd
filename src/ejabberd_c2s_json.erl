@@ -208,7 +208,7 @@
 -define(C2S_OPEN_TIMEOUT, 60000).
 -define(C2S_HIBERNATE_TIMEOUT, 60000 * 5). % 2 minutes of inactivity FIXME Now it unlogg the user
 % -define(C2S_AUTHORIZED_TIMEOUT, 60000 * 15). % 15 minutes of inactivity
--define(C2S_AUTHORIZED_TIMEOUT, 60000 * 2). % 2 min of inactivity
+-define(C2S_AUTHORIZED_TIMEOUT, 60000 * 10). % 10 min of inactivity
 
 %%%----------------------------------------------------------------------
 %%% API
