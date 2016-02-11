@@ -528,6 +528,8 @@ authorized({action, SeqId, Args}, StateData) ->
         <<"info">> ->
             case  xml:get_attr_s(<<"id">>, Args) of
                 <<>> ->
+                    Answer = make_error(undefined, SeqId, 404, <<"invalid call">>),
+                    send_element(StateData, (Answer)),
                     fsm_next_state(authorized, StateData);
 
                 Id ->
@@ -1231,7 +1233,9 @@ handle_info({db, SeqId, Result}, StateName, #state{aux_fields=Actions} = State) 
             fsm_next_state(StateName, State);
 
         {error, _} = Error ->
-            ?DEBUG(?MODULE_STRING "[~5w] DB: SeqId: ~p, Error: ~p", [ ?LINE, SeqId, Error ]),
+            ?ERROR_MSG(?MODULE_STRING "[~5w] DB: SeqId: ~p, Error: ~p", [ ?LINE, SeqId, Error ]),
+            Packet = make_error(enoent, SeqId, undefined, undefined),
+            send_element(State, Packet),
             fsm_next_state(StateName, State);
 
         {ok, Response} ->  % there is many response or a complex response
@@ -3585,46 +3589,6 @@ handle_action(Operation, SeqId, Args, State) ->
                     hyd_fqids:action_async(SeqId, Element, Operation, [ State#state.userid | Params ]),
                     Actions = State#state.aux_fields,
                     State#state{aux_fields=[{SeqId, [ Element, Operation, Params ]} | Actions ]}
-
-                    %case Operation of
-                    %    <<"create">> ->
-                    %        
-                    %        db:cast(SeqId, Operation, <<"fqids">>, [Element, State#state.userid | Params ]),
-                    %        Actions = State#state.aux_fields,
-                    %        State#state{aux_fields=[{SeqId, [ Element, Operation, Params ]} | Actions ]};
-
-                    %    _ ->
-                    %        db:cast(SeqId, <<"action">>, <<"fqids">>, [Element, Operation, [ State#state.userid | Params ]]),
-                    %        Actions = State#state.aux_fields,
-                    %        State#state{aux_fields=[{SeqId, [ Element, Operation, Params ]} | Actions ]}
-                    %end
-
-
-                    %case data(State, hyd_fqids, action, [ Element, Operation, [ State#state.userid | Params ]]) of
-                    %    {error, Reason} ->
-                    %        Answer = make_error(Reason, SeqId, 500, <<"error action">>),
-                    %        send_element(State, Answer),
-                    %        State;
-
-                    %    {ok, []} ->
-                    %        Answer= make_answer_not_found(SeqId),
-                    %        send_element(State, Answer),
-                    %        State;
-
-                    %    {ok, {Infos, Response}} ->
-                    %        % Answer = make_result(SeqId, Response),
-                    %        % send_element(State, Answer),
-                    %        %action_trigger(State, Element, Infos, Operation, Params, Response);
-                    %        Actions = State#state.aux_fields,
-                    %        State#state{aux_fields=[{SeqId, [ Element, Operation, Params ]} | Actions ]};
-
-                    %    {ok, Response} ->
-                    %        Answer = make_result(SeqId, Response),
-                    %        send_element(State, Answer),
-                    %        State
-
-                    %        %action_trigger(State, Element, Operation, Params, Response)
-                    %end
 
             end;
                 
