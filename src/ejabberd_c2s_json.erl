@@ -1359,7 +1359,7 @@ terminate(_Reason, session_established = StateName, StateData) ->
 terminate(_Reason, authorized = StateName, #state{ authenticated = Authenticated } = StateData) ->
     case Authenticated of
         true ->
-            ?INFO_MSG(?MODULE_STRING "[~5w] Close authorized session for SID: ~p, Ressource ~p, Userid: ~p User: ~p", [ 
+            ?INFO_MSG(?MODULE_STRING "[~5w] Close authorized session for SID: ~p, Ressource ~p, Userid: ~p User: ~p", [
                     ?LINE,
                     StateData#state.sid,
                     StateData#state.resource,
@@ -1367,42 +1367,34 @@ terminate(_Reason, authorized = StateName, #state{ authenticated = Authenticated
                     StateData#state.user
                     ]),
 
-                    ?INFO_MSG("Close session for SID: ~p, Ressource ~p, Userid: ~p User: ~p", [
-                            StateData#state.sid,
-                            StateData#state.resource,
+            %% [GTM] Log end of session
+            data_specific(StateData, hyd_users, session_end, [ StateData#state.resource, seqid() ]),
+
+            EmptySet = ?SETS:new(),
+            case StateData of
+                #state{pres_last = undefined,
+                    pres_a = EmptySet,
+                    pres_i = EmptySet,
+                    pres_invis = false} ->
+
+                    ejabberd_sm:close_session(StateData#state.sid,
                             StateData#state.userid,
-                            StateData#state.user
-                            ]),
-
-                    %% [GTM] Log end of session
-                    data_specific(StateData, hyd_users, session_end, [ StateData#state.resource, seqid() ]),
-
-                    EmptySet = ?SETS:new(),
-                    case StateData of
-                        #state{pres_last = undefined,
-                               pres_a = EmptySet,
-                               pres_i = EmptySet,
-                               pres_invis = false} ->
-
-                            ejabberd_sm:close_session(StateData#state.sid,
-                                          StateData#state.userid,
-                                          StateData#state.server,
-                                          StateData#state.resource);
-                        _ ->
-                            From = StateData#state.jid,
-                            Packet = {xmlelement, "presence",
-                                  [{"type", "unavailable"}], []},
-                            ejabberd_sm:close_session_unset_presence(
-                              StateData#state.sid,
-                              StateData#state.user,
-                              StateData#state.server,
-                              StateData#state.resource,
-                              ""),
-                            presence_broadcast(
-                              StateData, From, StateData#state.pres_a, Packet),
-                            presence_broadcast(
-                              StateData, From, StateData#state.pres_i, Packet)
-                    end
+                            StateData#state.server,
+                            StateData#state.resource);
+                _ ->
+                From = StateData#state.jid,
+                     Packet = {xmlelement, "presence",
+                         [{"type", "unavailable"}], []},
+                         ejabberd_sm:close_session_unset_presence(
+                                 StateData#state.sid,
+                                 StateData#state.user,
+                                 StateData#state.server,
+                                 StateData#state.resource,
+                                 ""),
+                         presence_broadcast(
+                                 StateData, From, StateData#state.pres_a, Packet),
+                         presence_broadcast(
+                                 StateData, From, StateData#state.pres_i, Packet)
             end,
             bounce_messages();
 
