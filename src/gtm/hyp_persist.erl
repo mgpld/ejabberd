@@ -1,6 +1,6 @@
 -module(hyp_persist).
 % Created hyp_persist.erl the 12:35:09 (04/11/2015) on core
-% Last Modification of hyp_persist.erl at 14:06:08 (15/02/2016) on sd-19230
+% Last Modification of hyp_persist.erl at 14:41:03 (15/02/2016) on sd-19230
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -304,10 +304,13 @@ prepare(Type, #state{ roomref=Fqid, creator=Userid, users=Users } = State) when
             {stop, Error}
     end;
 
-prepare(<<"timeline">>, #state{ roomref=Fqid, creator=Userid, users=Users } = State)  ->
+prepare(<<"timeline">>, #state{ roomref=_Fqid, creator=Userid, users=Users } = State)  ->
     case hyd_users:contacts(Userid) of
         [] ->
             {stop, normal};
+
+        {error, Error} ->
+            {stop, Error};
         
         Contacts ->
             NewUsers = lists:foldl( fun( Id, Tree ) ->
@@ -319,14 +322,11 @@ prepare(<<"timeline">>, #state{ roomref=Fqid, creator=Userid, users=Users } = St
                         ok
                 end
             end, Users, Contacts),
-            {ok, normal, State#state{ users=NewUsers }};
+            {ok, normal, State#state{ users=NewUsers }}
 
-        {error, Error} ->
-            {stop, Error}
     end;
 
-
-prepare(Type, #state{ roomref=Fqid,  creator=_Userid, users=Users } = State) when 
+prepare(Type, #state{ roomref=Fqid,  creator=_Userid } = State) when 
     Type =:= <<"drop">> ->
 
     case hyp_data:execute(hyd_fqids, read, [Fqid]) of

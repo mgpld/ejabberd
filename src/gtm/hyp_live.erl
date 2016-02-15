@@ -1,6 +1,6 @@
 -module(hyp_live).
 % Created hyp_live.erl the 13:33:37 (01/01/2015) on core
-% Last Modification of hyp_live.erl at 14:03:04 (15/02/2016) on sd-19230
+% Last Modification of hyp_live.erl at 14:39:02 (15/02/2016) on sd-19230
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -313,7 +313,7 @@ options(State, Message, [ _| Options]) ->
     options(State, Message, Options).
 
 %% prepare/2
-prepare(undefined, #state{ roomref=Fqid, creator=_Userid, users=Users } = State) ->
+prepare(undefined, #state{ roomref=Fqid, creator=_Userid } = State) ->
     case hyp_data:execute(hyd_fqids, read, [Fqid]) of
         {ok, Props} ->
             case hyp_data:extract([<<"api">>,<<"type">>], Props) of 
@@ -347,7 +347,7 @@ prepare(Type, #state{ roomref=Fqid, creator=Userid, users=Users } = State) when
             {stop, Error}
     end;
 
-prepare(Type, #state{ roomref=Fqid,  creator=_Userid, users=Users } = State) when 
+prepare(Type, #state{ roomref=Fqid,  creator=_Userid } = State) when 
     Type =:= <<"drop">> ->
 
     case hyp_data:execute(hyd_fqids, read, [Fqid]) of
