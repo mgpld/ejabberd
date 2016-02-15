@@ -426,7 +426,7 @@ session_established({login, SeqId, Args}, StateData) ->
                 {<<"username">>, Username},
                 {<<"domain">>, TmpState#state.server},
                 {<<"id">>, UserId},
-                {<<"timeout">>, ?C2S_HIBERNATE_TIMEOUT}, %% TODO add module_info(attributes) -> vsn
+                {<<"timeout">>, ?C2S_AUTHORIZED_TIMEOUT}, %% TODO add module_info(attributes) -> vsn
                 {<<"infos">>, {struct, UserInfos}} | SessionInfos ]),
             %send_element(TmpState, (Answer)),
             send_element(TmpState, Answer),
@@ -616,6 +616,7 @@ authorized({action, SeqId, Args}, StateData) ->
                                 fsm_next_state(authorized, NewStateData);
 
                             ok ->
+                                ?DEBUG(?MODULE_STRING " handle_configuration: set operation: ~p", [ ok ]),
                                 Answer = make_answer(SeqId, [{<<"result">>, <<"ok">>}]),
                                 send_element(NewStateData, (Answer)),
                                 fsm_next_state(authorized, NewStateData);
@@ -1241,11 +1242,13 @@ handle_info({db, SeqId, Result}, StateName, #state{aux_fields=Actions} = State) 
         {ok, Response} ->  % there is many response or a complex response
             case db_results:unpack(Response) of
                 {ok, Answer} ->
+                    ?DEBUG(?MODULE_STRING ".~p DB: SeqId: ~p, Result: '~p'", [ ?LINE, SeqId, Answer ]),
                     Packet = make_result(SeqId, Answer),
                     send_element(State, Packet),
                     fsm_next_state(StateName, State);
 
                 {ok, Infos, More} ->
+                    ?DEBUG(?MODULE_STRING "[~5w] Async DB: SeqId: ~p, Infos: ~p", [ ?LINE, SeqId, Infos ]),
                     case db_results:unpack(More) of
                         {ok, Answer} ->
                             Packet = make_result(SeqId, Answer),
@@ -1323,40 +1326,46 @@ print_state(State = #state{pres_t = T, pres_f = F, pres_a = A, pres_i = I}) ->
 %% Purpose: Shutdown the fsm
 %% Returns: any
 %%----------------------------------------------------------------------
-terminate(_Reason, StateName, StateData) ->
+terminate(_Reason, session_established = StateName, StateData) ->
     ?DEBUG(?MODULE_STRING" Terminate: ~p (~p)\n~p\n", [ _Reason, StateName, StateData ]),
-    case StateName of
-        session_established ->
-            case StateData#state.authenticated of
-                replaced ->
-                    ?INFO_MSG("(~w) Replaced session for ~s",
-                          [StateData#state.socket,
-                           jlib:jid_to_string(StateData#state.jid)]),
-                    From = StateData#state.jid,
-                    Packet = {xmlelement, "presence",
-                          [{"type", "unavailable"}],
-                          [{xmlelement, "status", [],
-                        [{xmlcdata, "Replaced by new connection"}]}]},
-                    ejabberd_sm:close_session_unset_presence(
-                      StateData#state.sid,
-                      StateData#state.user,
-                      StateData#state.server,
-                      StateData#state.resource,
-                      "Replaced by new connection"),
-                    presence_broadcast(
-                      StateData, From, StateData#state.pres_a, Packet),
-                    presence_broadcast(
-                      StateData, From, StateData#state.pres_i, Packet);
+    case StateData#state.authenticated of
+        replaced ->
+            ?INFO_MSG("(~w) Replaced session for ~s",
+                  [StateData#state.socket,
+                   jlib:jid_to_string(StateData#state.jid)]),
+            From = StateData#state.jid,
+            Packet = {xmlelement, "presence",
+                  [{"type", "unavailable"}],
+                  [{xmlelement, "status", [],
+                [{xmlcdata, "Replaced by new connection"}]}]},
+            ejabberd_sm:close_session_unset_presence(
+              StateData#state.sid,
+              StateData#state.user,
+              StateData#state.server,
+              StateData#state.resource,
+              "Replaced by new connection"),
+            presence_broadcast(
+              StateData, From, StateData#state.pres_a, Packet),
+            presence_broadcast(
+              StateData, From, StateData#state.pres_i, Packet);
 
-                _ -> % User is not authenticated
-                    ?INFO_MSG("(~w) Close half-opened session for unauthenticated connection: ~p", [
-                        StateData#state.socket, StateData#state.jid])
-            end;
+        _ -> % User is not authenticated
+            ?INFO_MSG("(~w) Close half-opened session for unauthenticated connection: ~p", [
+                StateData#state.socket, StateData#state.jid])
+    end,
+    (StateData#state.sockmod):close(StateData#state.socket),
+    ok;
 
-        % User is authorized and authenticated 
-        authorized ->
-            case StateData#state.authenticated of
-                true ->
+terminate(_Reason, authorized = StateName, #state{ authenticated = Authenticated } = StateData) ->
+    case Authenticated of
+        true ->
+            ?INFO_MSG(?MODULE_STRING "[~5w] Close authorized session for SID: ~p, Ressource ~p, Userid: ~p User: ~p", [ 
+                    ?LINE,
+                    StateData#state.sid,
+                    StateData#state.resource,
+                    StateData#state.userid,
+                    StateData#state.user
+                    ]),
 
                     ?INFO_MSG("Close session for SID: ~p, Ressource ~p, Userid: ~p User: ~p", [
                             StateData#state.sid,
@@ -1400,6 +1409,11 @@ terminate(_Reason, StateName, StateData) ->
         _ ->
             ok
     end,
+    (StateData#state.sockmod):close(StateData#state.socket),
+    ok;
+
+terminate(_Reason, StateName, StateData) ->
+    ?ERROR_MSG(?MODULE_STRING "[~5w] Closing connection in state: ~p: sid: ~p", [ ?LINE, StateName, StateData#state.sid ]),
     (StateData#state.sockmod):close(StateData#state.socket),
     ok.
 
@@ -3815,6 +3829,16 @@ handle_message({chat, {Msgid, Message}}, _From, _To, State) ->
     Packet = (Data),
     {ok, Packet};
 
+handle_message({event, {Msgid, Message}}, _From, _To, State) ->
+    Data = [{<<"message">>, [
+                {<<"type">>,<<"event">>},
+                to(State),
+                {<<"msgid">>, Msgid },
+                {<<"data">>, Message}
+            ]}],
+    Packet = (Data),
+    {ok, Packet};
+
 % the message Child must be deleted
 handle_message({event, {Msgid, {delete, Child}}}, From, _To, State) ->
     #jid{lresource=Ref} = From,
@@ -3826,18 +3850,6 @@ handle_message({event, {Msgid, {delete, Child}}}, From, _To, State) ->
                 {<<"data">>, [
                     {<<"operation">>,<<"delete">>},
                     {<<"child">>, Child}]}
-            ]}],
-    Packet = (Data),
-    {ok, Packet};
-
-handle_message({event, {Msgid, Message}}, From, _To, State) ->
-    #jid{lresource=Ref} = From,
-    Data = [{<<"message">>, [
-                {<<"type">>,<<"event">>},
-                {<<"from">>, Ref}, 
-                to(State),
-                {<<"msgid">>, Msgid },
-                {<<"event">>, Message}
             ]}],
     Packet = (Data),
     {ok, Packet};
@@ -3885,6 +3897,7 @@ data_specific(#state{db=Db, sid=_Sid, user=Username, server=_Server}, Module, Fu
     ?DEBUG(?MODULE_STRING " [~s (~p|~p)] data_specific: Db: ~p  apply(~p, ~p, ~p)", [ 
         Username, seqid(), _Sid,
         Db, Module, Function, Args ]),
+
     Result = apply(Module, Function, Args), % slowest call possible :)
     case Result of 
         {badrpc, Reason} ->
@@ -3918,7 +3931,7 @@ data_specific(#state{db=Db, sid=_Sid, user=Username, server=_Server}, Module, Fu
             Response;
 
         Any -> %% Error are assumed to be catched earlier
-            ?DEBUG(?MODULE_STRING " [~s (~p|~p)] data_specific: backend catchall: ~p", [ Username, seqid(), _Sid, Any ]),
+            ?DEBUG(?MODULE_STRING "[~5w] [~s (~p|~p)] data_specific: backend catchall: ~p", [ ?LINE, Username, seqid(), _Sid, Any ]),
             {ok, Any}
     end.
 

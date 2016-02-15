@@ -1,6 +1,6 @@
 -module(hyp_persist).
 % Created hyp_persist.erl the 12:35:09 (04/11/2015) on core
-% Last Modification of hyp_persist.erl at 20:49:27 (08/02/2016) on sd-19230
+% Last Modification of hyp_persist.erl at 14:06:08 (15/02/2016) on sd-19230
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -52,7 +52,7 @@
     locked/2, locked/3
 ]).
 
--define( INACTIVITY_TIMEOUT, 10000). % 10 seconds
+-define( INACTIVITY_TIMEOUT, 60 * 1000). % 10 seconds
 
 -record(question, {
     id,
@@ -243,7 +243,7 @@ route(From, To, Message) ->
 %% Purpose Id must be incorporated in the final packet sent to users
 send_message(Message, #state{ roomref=Ref, users=Users, cid=Id } = State) ->
     Child = hyp_data:extract([<<"message">>,<<"child">>], Message),
-    From = iolist_to_binary([<<"chat@harmony/">>, Ref]),
+    From = iolist_to_binary([<<"event@harmony/">>, Ref]),
     Msgid = iolist_to_binary([Ref, $. , integer_to_list(Id)]),
     Iter = gb_trees:iterator(Users),
     Tree = gb_trees:next(Iter),
@@ -286,7 +286,6 @@ prepare(undefined, #state{ roomref=Fqid, creator=_Userid, users=_Users } = State
     end;
 
 prepare(Type, #state{ roomref=Fqid, creator=Userid, users=Users } = State) when 
-    Type =:= <<"timeline">>;
     Type =:= <<"comgroup">>;
     Type =:= <<"page">> ->
 
@@ -305,7 +304,29 @@ prepare(Type, #state{ roomref=Fqid, creator=Userid, users=Users } = State) when
             {stop, Error}
     end;
 
-prepare(Type, #state{ roomref=Fqid,  creator=_Userid, users=_Users } = State) when 
+prepare(<<"timeline">>, #state{ roomref=Fqid, creator=Userid, users=Users } = State)  ->
+    case hyd_users:contacts(Userid) of
+        [] ->
+            {stop, normal};
+        
+        Contacts ->
+            NewUsers = lists:foldl( fun( Id, Tree ) ->
+                case db:call(<<"%getNewsfeed">>,<<"users">>, [Id]) of
+                    {ok, Newsfeed} ->
+                        ?DEBUG(?MODULE_STRING "[~5w] getNewsfeed: Id: ~p Newsfeed: ~p", [ ?LINE, Id, Newsfeed ]), 
+                        gb_trees:enter(Id, Newsfeed, Tree);
+                    _ ->
+                        ok
+                end
+            end, Users, Contacts),
+            {ok, normal, State#state{ users=NewUsers }};
+
+        {error, Error} ->
+            {stop, Error}
+    end;
+
+
+prepare(Type, #state{ roomref=Fqid,  creator=_Userid, users=Users } = State) when 
     Type =:= <<"drop">> ->
 
     case hyp_data:execute(hyd_fqids, read, [Fqid]) of
@@ -320,21 +341,26 @@ prepare(Type, #state{ roomref=Fqid,  creator=_Userid, users=_Users } = State) wh
 
         {error, Error} ->
             {stop, Error}
-    end;
-prepare(Type, _State) ->
-    ?DEBUG( ?MODULE_STRING "[~5w] Unhandled persist process for type: ~p", [ ?LINE, Type ]),
-    {stop, einval}.
+    end.
 
-% store message in user newsfeed 
-% send realtime message about this new message
+% send_message(Message, #state{ roomref=Ref, host=Host, mod=Module, users=Users, cid=Id } = _State) ->
+
+% 1) store message in user newsfeed 
+% 2) send realtime message about this new message
 publish(none, _, _, _, _, _) ->
     ok;
 publish({User, Newsfeed, Iter}, Child, Msgid, From, Message, #state{ host=Host, mod=Module } = State) ->
     To = iolist_to_binary([User,<<"@">>,Host]),
-    Packet = {chat, {Msgid, Message}},
-    hyd_fqids:action(Newsfeed,<<"addChild">>,[User,Child]),
+    Packet = {event, {Msgid, Message}},
+    addchild(Newsfeed, User, Child),
     ?DEBUG(?MODULE_STRING "[~5w] send_message: Module: ~p from: ~p to: ~p", [ ?LINE, Module, From, To ]), 
     Module:route(From, To, Packet ),
     publish(gb_trees:next(Iter), Child, Msgid, From, Message, State).
+
+addchild(<<"0">>, _User, _Child) ->
+    ok;
+addchild(Newsfeed, User, Child) ->
+    hyd_fqids:action(Newsfeed, <<"addChild">>, [ User, Child ]).
+
 
 
