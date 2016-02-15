@@ -910,8 +910,8 @@ authorized({action, SeqId, Args}, StateData) ->
                     fsm_next_state(authorized, StateData)
             end;
 
-        Type ->
-            ?ERROR_MSG(?MODULE_STRING "[~5w] Unhandled action: ~p\n~p", [ ?LINE, Type, Args]),
+        _Any ->
+            ?ERROR_MSG(?MODULE_STRING "[~5w] Unhandled action: ~p\n~p", [ ?LINE, _Any, Args]),
             fsm_next_state(authorized, StateData)
 
     end;
@@ -3821,16 +3821,6 @@ handle_message({chat, {Msgid, Message}}, _From, _To, State) ->
     Packet = (Data),
     {ok, Packet};
 
-handle_message({event, {Msgid, Message}}, _From, _To, State) ->
-    Data = [{<<"message">>, [
-                {<<"type">>,<<"event">>},
-                to(State),
-                {<<"msgid">>, Msgid },
-                {<<"data">>, Message}
-            ]}],
-    Packet = (Data),
-    {ok, Packet};
-
 % the message Child must be deleted
 handle_message({event, {Msgid, {delete, Child}}}, From, _To, State) ->
     #jid{lresource=Ref} = From,
@@ -3842,6 +3832,16 @@ handle_message({event, {Msgid, {delete, Child}}}, From, _To, State) ->
                 {<<"data">>, [
                     {<<"operation">>,<<"delete">>},
                     {<<"child">>, Child}]}
+            ]}],
+    Packet = (Data),
+    {ok, Packet};
+
+handle_message({event, {Msgid, Message}}, _From, _To, State) ->
+    Data = [{<<"message">>, [
+                {<<"type">>,<<"event">>},
+                to(State),
+                {<<"msgid">>, Msgid },
+                {<<"data">>, Message}
             ]}],
     Packet = (Data),
     {ok, Packet};
