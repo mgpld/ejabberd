@@ -164,6 +164,10 @@ start_listener({Port, _Ip, _}, Opts) ->
     Path = proplists:get_value(path, Opts, "/sockjs"),
     Prefix = proplists:get_value(prefix, Opts, Path),
     PrefixBin = list_to_binary(Prefix),
+    Certfile = proplists:get_value(certfile, Opts, []),
+    Keyfile = proplists:get_value(keyfile, Opts, []),
+    %CAcertfile = proplists:get_value(cacertfile, Opts, []),
+    %Password = proplists:get_value(password, Opts, []),
     
     SockjsState = sockjs_handler:init_state(PrefixBin, fun service_ej/3, #sockjs_state{}, []),
 
@@ -177,10 +181,19 @@ start_listener({Port, _Ip, _}, Opts) ->
     Routes = [{'_',  VhostRoutes}], % any vhost
     
     Dispatch = cowboy_router:compile( Routes ),
+    cowboy:start_https({ejabberd_sockjs_ssl, Port}, 100, [
+            {port, Port},
+            {log_alert, false},
+            %{cacertfile, CAcertfile},
+            %{password, Password},
+            {certfile, binary_to_list(Certfile)},
+            {keyfile, binary_to_list(Keyfile)}
+        ],
+        [{max_keepalive, 50}, {env, [{dispatch, Dispatch}]}]).
     
-    cowboy:start_http({ejabberd_sockjs_http, Port}, 100,
-    	[{port, Port}],
-    	[{env, [{dispatch, Dispatch}]}]).
+    %%cowboy:start_http({ejabberd_sockjs_http, Port}, 100,
+    %	[{port, Port}],
+    %	[{env, [{dispatch, Dispatch}]}]).
 
 %% gen_server callbacks
 init([Conn]) ->

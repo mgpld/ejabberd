@@ -330,9 +330,9 @@ get_subscribed(FsmRef) ->
 % New login mechanism
 session_established({login, SeqId, Args}, StateData) ->
     
-    Id = xml:get_attr_s(<<"id">>, Args),
-    _Password = xml:get_attr_s(<<"pass">>, Args),
-    %Token = xml:get_attr_s(<<"token">>, Args), %% Token is for rebinding or login
+    Id = fxml:get_attr_s(<<"id">>, Args),
+    _Password = fxml:get_attr_s(<<"pass">>, Args),
+    %Token = fxml:get_attr_s(<<"token">>, Args), %% Token is for rebinding or login
     Now = os:timestamp(),
     
     SID = {Now, self()},
@@ -518,7 +518,7 @@ authorized({action, SeqId, <<"ping">>}, StateData) ->
     fsm_next_state(authorized, StateData);
 
 authorized({action, SeqId, Args}, StateData) ->
-    case xml:get_attr_s(<<"type">>, Args) of
+    case fxml:get_attr_s(<<"type">>, Args) of
         <<"logout">> ->
             Answer = make_answer(SeqId, [{<<"status">>, <<"ok">>}]),
             send_element(StateData, (Answer)),
@@ -526,7 +526,7 @@ authorized({action, SeqId, Args}, StateData) ->
             {stop, normal, StateData};
 
         <<"info">> ->
-            case  xml:get_attr_s(<<"id">>, Args) of
+            case  fxml:get_attr_s(<<"id">>, Args) of
                 <<>> ->
                     Answer = make_error(undefined, SeqId, 404, <<"invalid call">>),
                     send_element(StateData, (Answer)),
@@ -582,9 +582,9 @@ authorized({action, SeqId, Args}, StateData) ->
             fsm_next_state(authorized, StateData);
 
         <<"configuration">> ->
-            case  xml:get_attr_s(<<"id">>, Args) of
+            case  fxml:get_attr_s(<<"id">>, Args) of
             <<>> ->
-                case xml:get_attr_s(<<"operation">>, Args) of
+                case fxml:get_attr_s(<<"operation">>, Args) of
                     <<"list">> ->
                         case handle_configuration(list, undefined, Args, StateData) of
                             {[], _} ->
@@ -638,7 +638,7 @@ authorized({action, SeqId, Args}, StateData) ->
 	        end;
 	
         <<"visibility">> ->
-            case  xml:get_attr_s(<<"id">>, Args) of
+            case  fxml:get_attr_s(<<"id">>, Args) of
                 <<>> ->
                     fsm_next_state(authorized, StateData);
 
@@ -664,7 +664,7 @@ authorized({action, SeqId, Args}, StateData) ->
             end;
 
         <<"leave-discussion">> ->
-            case xml:get_attr_s(<<"discussionid">>, Args) of
+            case fxml:get_attr_s(<<"discussionid">>, Args) of
                 <<>> ->
                     fsm_next_state(authorized, StateData);
 
@@ -689,7 +689,7 @@ authorized({action, SeqId, Args}, StateData) ->
             end;
 
         <<"join-discussion">> ->
-            case xml:get_attr_s(<<"discussionid">>, Args) of
+            case fxml:get_attr_s(<<"discussionid">>, Args) of
                 <<>> ->
                     fsm_next_state(authorized, StateData);
 
@@ -709,7 +709,7 @@ authorized({action, SeqId, Args}, StateData) ->
                 end;
 
         <<"quizz">> ->
-            case xml:get_attr_s(<<"operation">>, Args) of
+            case fxml:get_attr_s(<<"operation">>, Args) of
             <<>> ->
                 fsm_next_state(authorized, StateData);
 
@@ -720,7 +720,7 @@ authorized({action, SeqId, Args}, StateData) ->
 
         % NEW API v2 'contact'
         <<"contact">> ->
-            case xml:get_attr_s(<<"operation">>, Args) of
+            case fxml:get_attr_s(<<"operation">>, Args) of
                 <<>> ->
                     fsm_next_state(authorized, StateData);
 
@@ -731,7 +731,7 @@ authorized({action, SeqId, Args}, StateData) ->
 
         % NEW API v2 'profile'
         <<"profile">> ->
-            case xml:get_attr_s(<<"operation">>, Args) of
+            case fxml:get_attr_s(<<"operation">>, Args) of
                 <<>> ->
                     fsm_next_state(authorized, StateData);
 
@@ -741,7 +741,7 @@ authorized({action, SeqId, Args}, StateData) ->
            end;
 
         <<"room">> ->
-            case xml:get_attr_s(<<"operation">>, Args) of
+            case fxml:get_attr_s(<<"operation">>, Args) of
                 <<>> ->
                     fsm_next_state(authorized, StateData);
 
@@ -751,7 +751,7 @@ authorized({action, SeqId, Args}, StateData) ->
            end;
 
         <<"groupchat">> ->
-            case xml:get_attr_s(<<"to">>, Args) of
+            case fxml:get_attr_s(<<"to">>, Args) of
             <<>> ->
                 fsm_next_state(authorized, StateData);
 
@@ -761,7 +761,7 @@ authorized({action, SeqId, Args}, StateData) ->
            end;
 
         <<"privchat">> -> %%FIXME
-            case xml:get_attr_s(<<"to">>, Args) of
+            case fxml:get_attr_s(<<"to">>, Args) of
                 <<>> ->
                     fsm_next_state(authorized, StateData);
 
@@ -770,7 +770,7 @@ authorized({action, SeqId, Args}, StateData) ->
                     #jid{luser=ToUser,lserver=ToServer} = ToJid,
                     Pids = get_user_pids(ToUser, ToServer),
                     ?DEBUG(?MODULE_STRING " privchat Sending to ~p, his pids list is: ~p", [ ToUser, Pids ]),
-                    Data = xml:get_attr_s(<<"body">>, Args),
+                    Data = fxml:get_attr_s(<<"body">>, Args),
                     %% FIXME we are sending to the process of the user, not the socket
                     %% We could use erlang terms instead of JSON
                     Json = [{<<"message">>, [
@@ -788,7 +788,7 @@ authorized({action, SeqId, Args}, StateData) ->
             end;
 
         <<"user">> ->
-            case xml:get_attr_s(<<"operation">>, Args) of
+            case fxml:get_attr_s(<<"operation">>, Args) of
                 <<>> ->
                     fsm_next_state(authorized, StateData);
 
@@ -798,7 +798,7 @@ authorized({action, SeqId, Args}, StateData) ->
             end;
 
         <<"contactlist">> ->
-            case xml:get_attr_s(<<"operation">>, Args) of
+            case fxml:get_attr_s(<<"operation">>, Args) of
                 <<>> ->
                     fsm_next_state(authorized, StateData);
 
@@ -808,7 +808,7 @@ authorized({action, SeqId, Args}, StateData) ->
             end;
 
         <<"group">> ->
-            case xml:get_attr_s(<<"operation">>, Args) of
+            case fxml:get_attr_s(<<"operation">>, Args) of
                 <<>> ->
                     fsm_next_state(authorized, StateData);
 
@@ -819,7 +819,7 @@ authorized({action, SeqId, Args}, StateData) ->
 
         % Handle_state i.e. composing, writing, uploading...
         <<"state">> ->
-            case xml:get_attr_s(<<"operation">>, Args) of
+            case fxml:get_attr_s(<<"operation">>, Args) of
                 <<>> ->
                     fsm_next_state(authorized, StateData);
 
@@ -829,7 +829,7 @@ authorized({action, SeqId, Args}, StateData) ->
             end;
 
         <<"thread">> ->
-            case xml:get_attr_s(<<"operation">>, Args) of
+            case fxml:get_attr_s(<<"operation">>, Args) of
                 <<>> ->
                     fsm_next_state(authorized, StateData);
 
@@ -839,7 +839,7 @@ authorized({action, SeqId, Args}, StateData) ->
             end;
 
         <<"page">> ->
-            case xml:get_attr_s(<<"operation">>, Args) of
+            case fxml:get_attr_s(<<"operation">>, Args) of
                 <<>> ->
                     fsm_next_state(authorized, StateData);
 
@@ -849,7 +849,7 @@ authorized({action, SeqId, Args}, StateData) ->
             end;
 
         <<"action">> ->
-            case xml:get_attr_s(<<"operation">>, Args) of
+            case fxml:get_attr_s(<<"operation">>, Args) of
                 <<>> ->
                     fsm_next_state(authorized, StateData);
 
@@ -859,7 +859,7 @@ authorized({action, SeqId, Args}, StateData) ->
             end;
 
         <<"post">> -> % post destinations are 'thread's
-            case xml:get_attr_s(<<"to">>, Args) of
+            case fxml:get_attr_s(<<"to">>, Args) of
                 <<>> ->
                     fsm_next_state(authorized, StateData);
 
@@ -868,11 +868,11 @@ authorized({action, SeqId, Args}, StateData) ->
            %          fsm_next_state(authorized, StateData)
            %  end;
                     % Split between internals and public properties
-                    AllProperties = xml:get_attr_s(<<"properties">>, Args),
+                    AllProperties = fxml:get_attr_s(<<"properties">>, Args),
                     { PvProperties, PbProperties } = extract_message_options( AllProperties ),
 
-                    Data = xml:get_attr_s(<<"data">>, Args),
-                    Content = xml:get_attr_s(<<"content">>, Args),
+                    Data = fxml:get_attr_s(<<"data">>, Args),
+                    Content = fxml:get_attr_s(<<"content">>, Args),
                     From = jlib:jid_to_string(StateData#state.jid),
                     Json = [{<<"type">>,<<"reaction">>},
                             {<<"from">>, [
@@ -891,7 +891,7 @@ authorized({action, SeqId, Args}, StateData) ->
                 end;
 
         <<"search">> ->
-            case xml:get_attr_s(<<"operation">>, Args) of
+            case fxml:get_attr_s(<<"operation">>, Args) of
                 <<>> ->
                     fsm_next_state(authorized, StateData);
 
@@ -901,7 +901,7 @@ authorized({action, SeqId, Args}, StateData) ->
             end;
 
         Type ->
-            case xml:get_attr_s(<<"operation">>, Args) of
+            case fxml:get_attr_s(<<"operation">>, Args) of
                 <<>> ->
                     fsm_next_state(authorized, StateData);
 
@@ -917,14 +917,14 @@ authorized({action, SeqId, Args}, StateData) ->
     end;
 
 authorized({message, SeqId, Args}, StateData) ->
-    case xml:get_attr_s(<<"type">>, Args) of
+    case fxml:get_attr_s(<<"type">>, Args) of
         <<"rtcdata">> ->
-            case xml:get_attr_s(<<"to">>, Args) of
+            case fxml:get_attr_s(<<"to">>, Args) of
                 <<>> ->
                     fsm_next_state(authorized, StateData);
 
                 To ->
-                    %?DEBUG("xml: ~p", [ xmlelement("message", Args) ]),
+                    %?DEBUG("fxml: ~p", [ xmlelement("message", Args) ]),
                     %Pids = get_members(To),
                     
                     ToJid = jlib:string_to_jid(To),
@@ -932,7 +932,7 @@ authorized({message, SeqId, Args}, StateData) ->
                     Pids = get_user_pids(ToUser, ToServer),
                     ?DEBUG(?MODULE_STRING " rtcdata Sending to ~p, pids are: ~p", [ ToUser, Pids ]),
                     %From = jlib:jid_to_string(StateData#state.jid),
-                    Data = xml:get_attr_s(<<"data">>, Args),
+                    Data = fxml:get_attr_s(<<"data">>, Args),
                     Json = [{<<"message">>, [
                                 {<<"type">>,<<"rtcdata">>},
                                 {<<"sequence">>, SeqId},
@@ -951,12 +951,12 @@ authorized({message, SeqId, Args}, StateData) ->
 
 
         <<"chat">> -> % chat destinations are 'room's
-            case xml:get_attr_s(<<"to">>, Args) of
+            case fxml:get_attr_s(<<"to">>, Args) of
                 <<>> ->
                     fsm_next_state(authorized, StateData);
 
                 BTo ->
-                    case xml:get_attr_s(<<"body">>, Args) of
+                    case fxml:get_attr_s(<<"body">>, Args) of
                         <<>> ->
                             fsm_next_state(authorized, StateData);
 
@@ -988,12 +988,12 @@ authorized({message, SeqId, Args}, StateData) ->
 
 authorized({invite, _SeqId, Args}, StateData) ->
 
-    case xml:get_attr_s(<<"discussionid">>, Args) of 
+    case fxml:get_attr_s(<<"discussionid">>, Args) of 
         <<>> ->
             fsm_next_state(authorized, StateData);
 
         DiscussionId ->
-            case xml:get_attr_s(<<"id">>, Args) of
+            case fxml:get_attr_s(<<"id">>, Args) of
                 <<>> ->
                     fsm_next_state(authorized, StateData);
 
@@ -1491,7 +1491,7 @@ presence_broadcast(StateData, From, JIDSet, Packet) ->
 get_showtag(undefined) ->
     "unavailable";
 get_showtag(Presence) ->
-    case xml:get_path_s(Presence, [{elem, "show"}, cdata]) of
+    case fxml:get_path_s(Presence, [{elem, "show"}, cdata]) of
 	""      -> "available";
 	ShowTag -> ShowTag
     end.
@@ -1499,7 +1499,7 @@ get_showtag(Presence) ->
 get_statustag(undefined) ->
     "";
 get_statustag(Presence) ->
-    case xml:get_path_s(Presence, [{elem, "status"}, cdata]) of
+    case fxml:get_path_s(Presence, [{elem, "status"}, cdata]) of
 	ShowTag -> ShowTag
     end.
 
@@ -1734,7 +1734,7 @@ option_check(X) ->
     X.
 
 handle_configuration(Id, Args, State) ->
-    case xml:get_attr_s(<<"operation">>, Args) of
+    case fxml:get_attr_s(<<"operation">>, Args) of
         <<"set">> ->
            handle_configuration(write, Id, Args, State);
 
@@ -1769,7 +1769,7 @@ handle_configuration(Mode, Id, Args, State) ->
     State :: #state{}) -> {ok, {term(),#state{}}} | {error, term()}.
 
 do_configuration(write, Id, Args, State) ->
-    case xml:get_attr_s(<<"value">>, Args) of
+    case fxml:get_attr_s(<<"value">>, Args) of
         <<>> ->
 	        {ok, {false, State}};
 	    
@@ -1800,7 +1800,7 @@ do_configuration(Mode, Id, Args, _State) ->
     ok.
 
 handle_visibility(Id, Args, State) ->
-    case xml:get_attr_s(<<"operation">>, Args) of
+    case fxml:get_attr_s(<<"operation">>, Args) of
        <<"set">> ->
            handle_visibility(write, Id, Args, State);
 
@@ -1832,9 +1832,9 @@ handle_visibility(Mode, Id, Args, State) ->
     State :: #state{}) -> {ok, {term(),#state{}}} | {error, term()}.
 
 do_visibility(write, Id, Args, State) ->
-    case xml:get_attr_s(<<"value">>, Args) of
+    case fxml:get_attr_s(<<"value">>, Args) of
         <<>> ->
-            case xml:get_attr_s(<<"values">>, Args) of
+            case fxml:get_attr_s(<<"values">>, Args) of
                 {struct, Data} ->
                     ?DEBUG(?MODULE_STRING " visibility Data: ~p", [ Data ]),
                     profile(State, ?OPERATION_SETVISIBILITY_VALUE, [ Id, Data ]),
@@ -2055,7 +2055,7 @@ handle_chat(Group, _SeqId, Args, State) ->
     mod_chat:route(Host, Group, From, message, Args).
 
 handle_room(<<"start">>, SeqId, Args, State) ->
-    case xml:get_attr_s(<<"id">>, Args) of
+    case fxml:get_attr_s(<<"id">>, Args) of
         <<>> ->
             false;
 
@@ -2073,7 +2073,7 @@ handle_room(<<"start">>, SeqId, Args, State) ->
     end;
 
 handle_room(<<"stop">>, SeqId, Args, State)->
-    case xml:get_attr_s(<<"id">>, Args) of
+    case fxml:get_attr_s(<<"id">>, Args) of
         <<>> ->
             false;
 
@@ -2090,7 +2090,7 @@ handle_room(Operation, _SeqId, Args, _State) ->
     ?DEBUG(?MODULE_STRING " Room (default): Operation: ~p, Args: ~p", [ Operation, Args ]).
 
 handle_quizz(<<"start">>, SeqId, Args, State) ->
-    case xml:get_attr_s(<<"id">>, Args) of
+    case fxml:get_attr_s(<<"id">>, Args) of
          <<>> ->
             false;
 
@@ -2116,7 +2116,7 @@ handle_quizz(<<"start">>, SeqId, Args, State) ->
     end;
 
 handle_quizz(<<"ready">>, SeqId, Args, State) ->
-    case xml:get_attr_s(<<"id">>, Args) of
+    case fxml:get_attr_s(<<"id">>, Args) of
          <<>> ->
             false;
 
@@ -2132,7 +2132,7 @@ handle_quizz(<<"ready">>, SeqId, Args, State) ->
     end;
 
 handle_quizz(<<"stop">>, SeqId, Args, State)->
-    case xml:get_attr_s(<<"id">>, Args) of
+    case fxml:get_attr_s(<<"id">>, Args) of
 	[] ->
 	    false;
 
@@ -2144,7 +2144,7 @@ handle_quizz(<<"stop">>, SeqId, Args, State)->
 	    send_element(State, (Answer))
     end;
 handle_quizz(<<"accept">>, SeqId, Args, State)->
-    case xml:get_attr_s(<<"id">>, Args) of
+    case fxml:get_attr_s(<<"id">>, Args) of
         <<>> ->
             false;
 
@@ -2157,7 +2157,7 @@ handle_quizz(<<"accept">>, SeqId, Args, State)->
             send_element(State, (Answer))
     end;
 handle_quizz(<<"refuse">>, SeqId, Args, State)->
-    case xml:get_attr_s(<<"id">>, Args) of
+    case fxml:get_attr_s(<<"id">>, Args) of
 	[] ->
 	    false;
 
@@ -2168,7 +2168,7 @@ handle_quizz(<<"refuse">>, SeqId, Args, State)->
 
     end;
 handle_quizz(<<"answer">>, SeqId, Args, State)->
-    case xml:get_attr_s(<<"id">>, Args) of
+    case fxml:get_attr_s(<<"id">>, Args) of
         <<>> ->
             false;
 
@@ -2178,7 +2178,7 @@ handle_quizz(<<"answer">>, SeqId, Args, State)->
     end;
 
 handle_quizz(<<"next">>,  SeqId, Args, State) ->
-    case xml:get_attr_s(<<"id">>, Args) of
+    case fxml:get_attr_s(<<"id">>, Args) of
         <<>> ->
             false;
 
@@ -2187,7 +2187,7 @@ handle_quizz(<<"next">>,  SeqId, Args, State) ->
     end;
 
 handle_quizz(<<"score">>, SeqId, Args, State) ->
-    case xml:get_attr_s(<<"id">>, Args) of
+    case fxml:get_attr_s(<<"id">>, Args) of
         <<>> ->
             false;
 
@@ -2209,7 +2209,7 @@ do_quizz(?OPERATION_NEXT, GameRef, _SeqId, _Args, State) ->
     mod_game:route(Host, GameRef, self(), next, [] );
     
 do_quizz(?OPERATION_ANSWER, GameRef, _SeqId, Args, State) ->
-    case xml:get_attr_s(<<"value">>, Args) of
+    case fxml:get_attr_s(<<"value">>, Args) of
         <<>> ->
             false;
 
@@ -2381,7 +2381,7 @@ do_user(?OPERATION_GETLABELS = Op, _User, SeqId, Args, State) ->
     end;
 
 do_user(?OPERATION_GETPROPERTIES, _User, _SeqId, Args, State) ->
-    Type = case xml:get_attr_s(<<"category">>, Args) of
+    Type = case fxml:get_attr_s(<<"category">>, Args) of
         <<>> ->
             undefined;
 
@@ -4200,7 +4200,7 @@ args(Args, Keys) ->
 args(_, [], Result) ->
     lists:reverse(Result);
 args(Args, [ Key | Keys ], Result) ->
-    case xml:get_attr_s(Key, Args) of
+    case fxml:get_attr_s(Key, Args) of
         <<>> ->
             args(Args, Keys, Result);
         Value ->
@@ -4212,7 +4212,7 @@ action_args(Args, Keys) ->
 action_args(_, [], Result) ->
     lists:reverse(Result);
 action_args(Args, [ Key | Keys ], Result) ->
-    action_args(Args, Keys, [ xml:get_attr_s(Key, Args) | Result ]).
+    action_args(Args, Keys, [ fxml:get_attr_s(Key, Args) | Result ]).
 	    
 % Split from private and public properties
 % Private properties are for internal use only
