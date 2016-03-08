@@ -151,6 +151,9 @@
 
 -define(GENERIC_EXPLORE, 12).
 
+%% roles
+-define(ROLE_SUPERVISOR, 1).
+
 -define(TEST, false).
 
 %% pres_a contains all the presence available send (either through roster mechanism or directed).
@@ -517,7 +520,12 @@ authorized({action, SeqId, <<"ping">>}, StateData) ->
     seqid(1),
     fsm_next_state(authorized, StateData);
 
-authorized({action, SeqId, Args}, StateData) ->
+authorized({action, SeqId, <<"supervise">>}, StateData) ->
+    Answer = make_answer(SeqId, [{<<"status">>, <<"ok">>}]),
+    send_element(StateData, Answer),
+    fsm_next_state(authorized, StateData#state{ sasl_state = ?ROLE_SUPERVISOR });
+
+authorized({action, SeqId, Args}, StateData) when is_list(Args) ->
     case fxml:get_attr_s(<<"type">>, Args) of
         <<"logout">> ->
             Answer = make_answer(SeqId, [{<<"status">>, <<"ok">>}]),
@@ -3533,6 +3541,79 @@ comgroup(#state{userid=Userid} = _State, Operation, User, Args) ->
     ?DEBUG("DEFAULT(~p): ~p ~p: Operation: ~p, on User: ~p, Args: ~p", [ ?LINE, comgroups(), Userid, Operation, User, Args ]),
     {error, enoent}.
 
+
+% admin
+
+admin_operations(<<"set">>) -> ?OPERATION_SETINFO;
+admin_operations(<<"info">>) -> ?OPERATION_ABOUT;
+admin_operations(<<"user">>) -> ?OPERATION_STOREPROFILE;
+admin_operations(_) -> false.
+
+do_admin(?OPERATION_SETINFO = Op, User, SeqId, Args, State) ->
+    case args(Args, [<<"id">>, <<"section">>, <<"values">>]) of
+        [ Userid, Section, {struct, Values} ] ->
+            admin(State, Op, User, [ Userid, Section, Values ]);
+
+        _Wrong ->
+            ?ERROR_MSG(?MODULE_STRING ".~p do_admin: extracted: ~p", [ ?LINE, _Wrong ]),
+            Answer = make_error(SeqId, 406, <<"bad arguments">>),
+            send_element(State, (Answer)),
+            false
+    end;
+
+do_admin(?OPERATION_ABOUT = Op, User, SeqId, Args, State) ->
+    case args(Args, [<<"id">>, <<"section">>]) of
+        [ Id, Section ] ->
+            admin(State, Op, User, [ Id, Section ]);
+
+        _Wrong ->
+            ?ERROR_MSG(?MODULE_STRING ".~p do_admin: extracted: ~p", [ ?LINE, _Wrong ]),
+            Answer = make_error(SeqId, 406, <<"bad arguments">>),
+            send_element(State, (Answer)),
+            false
+    end;
+
+do_admin(?OPERATION_STOREPROFILE = Op, User, SeqId, Args, State) ->
+    case args(Args, [<<"id">>, <<"values">>]) of
+        [ Id, {struct, Values} ] ->
+            case args(Values, [<<"firstname">>, <<"lastname">>, <<"domain">>]) of
+                [ Firstname, Lastname, Domain ] ->
+                    admin(State, Op, User, [ Id, Firstname, Lastname, Domain ]);
+
+                _ ->
+                    Answer = make_error(SeqId, 406, <<"missing arguments">>),
+                    send_element(State, (Answer)),
+                    false
+            end;
+
+        _Wrong ->
+            ?ERROR_MSG(?MODULE_STRING ".~p do_admin: extracted: ~p", [ ?LINE, _Wrong ]),
+            Answer = make_error(SeqId, 406, <<"bad arguments">>),
+            send_element(State, (Answer)),
+            false
+    end;
+
+
+do_admin(_Operation, _User, _SeqId, _Args, _State) ->
+    ?DEBUG(?MODULE_STRING "[~5w] DEFAULT: do_admin ~p: Operation: ~p, on User: ~p, Seq: ~p, Args: ~p", [ ?LINE, _User, _Operation, _SeqId, _Args ]),
+    ok.
+
+admin(#state{userid=Userid} = State, ?OPERATION_SETINFO, _User, Args) ->
+    data_specific(State, hyd_admin, set_value, [ Userid | Args ]);
+
+admin(#state{userid=Userid} = State, ?OPERATION_ABOUT, _User, Args) ->
+    data_specific(State, hyd_admin, get_value, [ Userid | Args ]);
+
+admin(#state{userid=Userid} = State, ?OPERATION_STOREPROFILE, _User, Args) ->
+    data_specific(State, hyd_admin, create_user, [ Userid | Args ]);
+
+admin(#state{userid=Userid} = _State, Operation, User, Args) ->
+    ?DEBUG(?MODULE_STRING "[~5w] DEFAULT: admin ~p: Operation: ~p, on User: ~p, Args: ~p", [ ?LINE, Userid, Operation, User, Args ]),
+    {error, enoent}.
+
+    
+
+
 %%
 %% Handle_action 
 %%    1) Retrieve argument of this action
@@ -4509,13 +4590,26 @@ handle(<<"pages">> = Type, Operation, SeqId, Args, State) ->
 handle(<<"comgroups">> = Type, Operation, SeqId, Args, State) ->
     case comgroup_operations(Operation) of
         false ->
-            ?DEBUG(?MODULE_STRING ".~p handle_~p Page (default): Operation: ~p, Args: ~p", [ ?LINE, Type, Operation, Args ]),
+            ?DEBUG(?MODULE_STRING ".~p handle_~p Comgroups (default): Operation: ~p, Args: ~p", [ ?LINE, Type, Operation, Args ]),
             Answer = make_error(SeqId, 404, <<"unknown call ">>),
             send_element(State, Answer);
 
         OperationId ->
             #jid{luser=User} = State#state.jid,
             Response = do_comgroup(OperationId, User, SeqId, Args, State),
+            handle_operation(Type, SeqId, Response, State)
+    end;    
+
+handle(<<"admin">> = Type, Operation, SeqId, Args, #state{ sasl_state = Level } = State) when Level > 0 ->
+    case admin_operations(Operation) of
+        false ->
+            ?DEBUG(?MODULE_STRING ".~p handle_~p Admin (default): Operation: ~p, Args: ~p", [ ?LINE, Type, Operation, Args ]),
+            Answer = make_error(SeqId, 404, <<"unknown call ">>),
+            send_element(State, Answer);
+
+        OperationId ->
+            #jid{luser=User} = State#state.jid,
+            Response = do_admin(OperationId, User, SeqId, Args, State),
             handle_operation(Type, SeqId, Response, State)
     end;    
 
@@ -4560,8 +4654,8 @@ handle_operation(Type, SeqId, Response, State) ->
             send_element(State, Answer);
 
         {error, Reason} -> 
-            ?ERROR_MSG(?MODULE_STRING " handle_~s error: ~p", [ Type, Reason ]),
-            Answer = make_error(SeqId, 500, <<"internal server error">>),
+            ?ERROR_MSG(?MODULE_STRING ".~p handle_~s error: ~p", [ ?LINE, Type, Reason ]),
+            Answer = make_error(Reason, SeqId, undefined, undefined),
             send_element(State, Answer);
 
         Result ->

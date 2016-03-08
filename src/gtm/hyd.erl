@@ -1,6 +1,6 @@
 -module(hyd).
 % Created hyd.erl the 02:16:47 (06/02/2014) on core
-% Last Modification of hyd.erl at 09:23:00 (03/11/2015) on core
+% Last Modification of hyd.erl at 21:47:44 (08/03/2016) on sd-19230
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -15,6 +15,7 @@
 ]).
 
 -export([
+    run/1,
     quote/1,
     unquote/1
 ]).
