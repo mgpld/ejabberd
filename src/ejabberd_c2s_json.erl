@@ -164,7 +164,7 @@
     socket_monitor,
     db,
     timeout,
-    sasl_state,
+    sasl_state = 0,
     access,
     shaper,
     zlib = false,
@@ -4600,7 +4600,7 @@ handle(<<"comgroups">> = Type, Operation, SeqId, Args, State) ->
             handle_operation(Type, SeqId, Response, State)
     end;    
 
-handle(<<"admin">> = Type, Operation, SeqId, Args, #state{ sasl_state = Level } = State) when Level > 0 ->
+handle(<<"admin">> = Type, Operation, SeqId, Args, #state{ sasl_state = Level } = State) when Level >= ?ROLE_SUPERVISOR ->
     case admin_operations(Operation) of
         false ->
             ?DEBUG(?MODULE_STRING ".~p handle_~p Admin (default): Operation: ~p, Args: ~p", [ ?LINE, Type, Operation, Args ]),
