@@ -1271,13 +1271,17 @@ handle_info({db, SeqId, Result}, StateName, #state{aux_fields=Actions} = State) 
                                     fsm_next_state(StateName, State)
                             end;
 
-                        {error, _} = Error ->
+                        {error, Error} ->
                             ?DEBUG(?MODULE_STRING "[~5w] DB: SeqId: ~p, Error: ~p", [ ?LINE, SeqId, Error ]),
+                            Packet = make_error(Error, SeqId, undefined, undefined),
+                            send_element(State, Packet),
                             fsm_next_state(StateName, State)
                     end;
 
-                {error, _} = Error ->
+                {error, Error} ->
                     ?DEBUG(?MODULE_STRING "[~5w] DB: SeqId: ~p, Error: ~p", [ ?LINE, SeqId, Error ]),
+                    Packet = make_error(Error, SeqId, undefined, undefined),
+                    send_element(State, Packet),
                     fsm_next_state(StateName, State)
             end
     end;
@@ -4498,7 +4502,7 @@ action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, E
     Type =:= <<"group">>;
     Type =:= <<"thread">> ->
 
-    ?DEBUG(?MODULE_STRING " [~s (~p|~p)] action ~p ~p:~p(~p): ~p", [ _Username, seqid(), _Sid, Element, Type, "ADDMEMBER", [Otherid], Result ]),
+    ?DEBUG(?MODULE_STRING " [~s (~p|~p)] action ~p ~p:~p(~p): ~p", [ _Username, seqid(), _Sid, Element, Type, "addmember", [Otherid], Result ]),
 
     mod_chat:route(Host, Element, Creator, add, [Otherid]);
 
@@ -4506,7 +4510,7 @@ action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, E
     Type =:= <<"group">>;
     Type =:= <<"thread">> ->
 
-    ?DEBUG(?MODULE_STRING " [~s (~p|~p)] action ~p ~p:~p(~p): ~p", [ _Username, seqid(), _Sid, Element, Type, "DELMEMBER", [Otherid], Result ]),
+    ?DEBUG(?MODULE_STRING " [~s (~p|~p)] action ~p ~p:~p(~p): ~p", [ _Username, seqid(), _Sid, Element, Type, "delmember", [Otherid], Result ]),
 
     mod_chat:route(Host, Element, Creator, del, [Otherid]);
 
@@ -4548,6 +4552,18 @@ action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, E
         { <<"count">>, Count},
         { <<"child">>, Child}]),
     mod_chat:route(Host, Element, Creator, message, Packet);
+
+% realtime messages for article childs
+action(#state{user=Username, userid=Creator, server=Host} = _State, Element, Type, <<"addChild">>, [Child], _Result) when
+    Type =:= <<"article">> ->
+
+    RoomType = Type,
+    mod_chat:create_room(Host, RoomType, Creator, Element, []), % this will create synchronously the room if needed
+    Packet = make_packet( _State, <<"event">>, [
+        { <<"new">>, Element}
+    ]),
+    mod_chat:route(Host, Element, Creator, message, Packet),
+    mod_chat:route(Host, Element, Creator, add, [Creator]);
 
 action(#state{user=Username, sid=Sid} = _State, _Element, _Type, _Action, _Args, _Result) ->
     ?DEBUG(?MODULE_STRING " [~s (~p|~p)] action on type ~p: ~p:~p(~p):\n~p", [ Username, seqid(), Sid, _Type, _Element, _Action, _Args, _Result ]),
