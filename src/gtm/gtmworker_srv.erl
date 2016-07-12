@@ -231,10 +231,10 @@ cnode(Prefix, PortNum, InstanceId, Env) ->
 loop(Port, InstanceId) ->
     receive 
         {Port, {exit_status, _} = Reason} ->
-            error_logger:error_msg("Instance: ~p, Port: ~p exited with reason: ~p", [ InstanceId, Port, Reason]),
+            error_logger:error_msg("[GTM] Instance: ~p, Port: ~p exited with reason: ~p", [ InstanceId, Port, Reason]),
             exit(Reason);
             
         _Data ->
-            io:format("(~p) ~p\n", [ InstanceId, _Data ]),
+            error_logger:info_msg("[GTM] Instance (~p): ~p\n", [ InstanceId, _Data ]),
             loop(Port, InstanceId)
     end.

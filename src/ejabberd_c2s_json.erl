@@ -3676,17 +3676,25 @@ handle_action(Operation, SeqId, Args, State) ->
 
                 {ok, ActionArgs} ->
                     Params = action_args(Args, ActionArgs),
-                    ?DEBUG(?MODULE_STRING " handle_action ActionArgs: ~p, Args: ~p, -> Params: ~p", [ ActionArgs, Args, Params ]),
-                    hyd_fqids:action_async(SeqId, Element, Operation, [ State#state.userid | Params ]),
-                    Actions = State#state.aux_fields,
-                    State#state{aux_fields=[{SeqId, [ Element, Operation, Params ]} | Actions ]}
+                    case check_args(ActionArgs, Params) of
+                        true ->
+                            ?DEBUG(?MODULE_STRING "[~5w] handle_action ActionArgs: ~p, Args: ~p, -> Params: ~p", [ ?LINE, ActionArgs, Args, Params ]),
+                            hyd_fqids:action_async(SeqId, Element, Operation, [ State#state.userid | Params ]),
+                            Actions = State#state.aux_fields,
+                            State#state{aux_fields=[{SeqId, [ Element, Operation, Params ]} | Actions ]};
+
+                        false ->
+                            Answer = make_error(SeqId, 406, <<"invalid arguments provided">>),
+                            send_element(State, Answer),
+                            State
+                    end
 
             end;
                 
         _ ->
             Answer = make_error(SeqId, 406, <<"missing arguments: to">>),
             send_element(State, (Answer)),
-            false
+            State
     end.
 
 handle_search(Operation, SeqId, Args, State) ->
@@ -4298,6 +4306,28 @@ action_args(_, [], Result) ->
     lists:reverse(Result);
 action_args(Args, [ Key | Keys ], Result) ->
     action_args(Args, Keys, [ fxml:get_attr_s(Key, Args) | Result ]).
+
+% Check arguments against rules
+% max_size
+check_args(_Args, _Params) ->
+    lists:all(fun validsize/1, _Params).
+
+validsize(X) when is_binary(X) ->
+    case size(X) < 12000 of
+        false ->
+            false;
+
+        true ->
+            case utf8_utils:count(X) < 3001 of
+                false ->
+                    false;
+
+                true ->
+                    true
+            end
+    end;
+validsize(_) ->
+    true.
 	    
 % Split from private and public properties
 % Private properties are for internal use only

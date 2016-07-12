@@ -181,19 +181,20 @@ start_listener({Port, _Ip, _}, Opts) ->
     Routes = [{'_',  VhostRoutes}], % any vhost
     
     Dispatch = cowboy_router:compile( Routes ),
-    cowboy:start_https({ejabberd_sockjs_ssl, Port}, 100, [
-            {port, Port},
-            {log_alert, false},
-            %{cacertfile, CAcertfile},
-            %{password, Password},
-            {certfile, binary_to_list(Certfile)},
-            {keyfile, binary_to_list(Keyfile)}
-        ],
-        [{max_keepalive, 50}, {env, [{dispatch, Dispatch}]}]).
+    cowboy:start_http({ejabberd_sockjs_http, Port}, 100,
+    	[{port, Port}],
+    	[{env, [{dispatch, Dispatch}]}]).
     
-    %%cowboy:start_http({ejabberd_sockjs_http, Port}, 100,
-    %	[{port, Port}],
-    %	[{env, [{dispatch, Dispatch}]}]).
+    %cowboy:start_https({ejabberd_sockjs_ssl, Port}, 100, [
+    %        {port, Port},
+    %        {log_alert, false},
+    %        %{cacertfile, CAcertfile},
+    %        %{password, Password},
+    %        {certfile, binary_to_list(Certfile)},
+    %        {keyfile, binary_to_list(Keyfile)}
+    %    ],
+    %    [{max_keepalive, 50}, {env, [{dispatch, Dispatch}]}]).
+    
 
 %% gen_server callbacks
 init([Conn]) ->
