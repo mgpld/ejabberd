@@ -347,15 +347,16 @@ invite(Id, Args) ->
 handle_data( Data, #state{c2s_pid=Client,conn=Conn} = _State ) ->
     case parse(Data) of
         [] ->
-            ?ERROR_MSG(?MODULE_STRING " Error don't handle:\n~p", [ Data ]);
+            ?ERROR_MSG(?MODULE_STRING "[~5w] Error don't handle:\n~p", [ ?LINE, Data ]);
 
         {undefined, Type, Args} ->
-            ?ERROR_MSG(?MODULE_STRING " Unhandled json message type: ~p, args: ~p", [ Type, Args ]),
+            ?ERROR_MSG(?MODULE_STRING "[~5w] Unhandled json message type: ~p, args: ~p", [ ?LINE, Type, Args ]),
             Packet = [{<<"error">>, [ 
                 {<<"code">>, 999},
                 {<<"type">>, <<"protocol">>}
             ]}],
-            sockjs_session:send(Packet, Conn),
+	    Json = sockjs_json:encode(Packet),
+            sockjs_session:send(Json, Conn),
             ok;
 	    
         Event ->
