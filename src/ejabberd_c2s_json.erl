@@ -151,6 +151,9 @@
 
 -define(GENERIC_EXPLORE, 12).
 
+%% roles
+-define(ROLE_SUPERVISOR, 1).
+
 -define(TEST, false).
 
 %% pres_a contains all the presence available send (either through roster mechanism or directed).
@@ -517,7 +520,12 @@ authorized({action, SeqId, <<"ping">>}, StateData) ->
     seqid(1),
     fsm_next_state(authorized, StateData);
 
-authorized({action, SeqId, Args}, StateData) ->
+authorized({action, SeqId, <<"supervise">>}, StateData) ->
+    Answer = make_answer(SeqId, [{<<"status">>, <<"ok">>}]),
+    send_element(StateData, Answer),
+    fsm_next_state(authorized, StateData#state{ sasl_state = ?ROLE_SUPERVISOR });
+
+authorized({action, SeqId, Args}, StateData) when is_list(Args) ->
     case xml:get_attr_s(<<"type">>, Args) of
         <<"logout">> ->
             Answer = make_answer(SeqId, [{<<"status">>, <<"ok">>}]),
@@ -534,6 +542,41 @@ authorized({action, SeqId, Args}, StateData) ->
 
                 Id ->
                     case data_specific(StateData, hyd_fqids, read, [ Id, StateData#state.userid ]) of
+                        {error, Reason} ->
+                            ?ERROR_MSG(?MODULE_STRING "[~5w] Info: error: ~p", [ ?LINE, Reason ]),
+                            Answer = make_error(Reason, SeqId, 500, <<"internal server error">>),
+                            send_element(StateData, (Answer)),
+                            fsm_next_state(authorized, StateData);
+
+                        {ok, []} ->
+                            Answer = make_answer_not_found(SeqId),
+                            send_element(StateData, (Answer)),
+                            fsm_next_state(authorized, StateData);
+
+                        {ok, Result} ->
+                            %?DEBUG(?MODULE_STRING "[~5w] Info: returns: ~p", [ ?LINE, Result ]),
+                            Answer = make_answer(SeqId, 200, Result),
+                            send_element(StateData, (Answer)),
+                            delivered_notification( StateData, Id, Result),
+                            fsm_next_state(authorized, StateData);
+
+                        [] ->
+                            ?ERROR_MSG(?MODULE_STRING "[~5w] 'info': returns empty for ~p", [ ?LINE, Id ]),
+                            Answer = make_answer_not_found(SeqId),
+                            send_element(StateData, (Answer)),
+                            fsm_next_state(authorized, StateData)
+                    end
+            end;
+
+        <<"stats">> ->
+            case  xml:get_attr_s(<<"id">>, Args) of
+                <<>> ->
+                    Answer = make_error(undefined, SeqId, 404, <<"invalid call">>),
+                    send_element(StateData, (Answer)),
+                    fsm_next_state(authorized, StateData);
+
+                Id ->
+                    case data_specific(StateData, hyd_fqids, stats, [ Id, StateData#state.userid ]) of
                         {error, Reason} ->
                             ?ERROR_MSG(?MODULE_STRING "[~5w] Info: error: ~p", [ ?LINE, Reason ]),
                             Answer = make_error(Reason, SeqId, 500, <<"internal server error">>),
@@ -908,11 +951,11 @@ authorized({action, SeqId, Args}, StateData) ->
                 Operation ->
                     handle(Type, Operation, SeqId, Args, StateData),
                     fsm_next_state(authorized, StateData)
-            end;
+            end
 
-        _Any ->
-            ?ERROR_MSG(?MODULE_STRING "[~5w] Unhandled action: ~p\n~p", [ ?LINE, _Any, Args]),
-            fsm_next_state(authorized, StateData)
+        %_Any ->
+        %    ?ERROR_MSG(?MODULE_STRING " Unhandled action: ~p\n~p", [_Any, Args]),
+        %    fsm_next_state(authorized, StateData)
 
     end;
 
@@ -1356,7 +1399,7 @@ terminate(_Reason, session_established = StateName, StateData) ->
     (StateData#state.sockmod):close(StateData#state.socket),
     ok;
 
-terminate(_Reason, authorized = StateName, #state{ authenticated = Authenticated } = StateData) ->
+terminate(_Reason, authorized = _StateName, #state{ authenticated = Authenticated } = StateData) ->
     case Authenticated of
         true ->
             ?INFO_MSG(?MODULE_STRING "[~5w] Close authorized session for SID: ~p, Ressource ~p, Userid: ~p User: ~p", [
@@ -2406,7 +2449,7 @@ do_user(?OPERATION_GETCONFIGURATION, User, _SeqId, _Args, State) ->
             Result
     end;
 
-do_user(?OPERATION_GETOTHERCONTACTTREE = Op, User, SeqId, Args, State) ->
+do_user(?OPERATION_GETOTHERCONTACTTREE = Op, _User, SeqId, Args, State) ->
     case args(Args, [<<"userid">>]) of
         [ OtherId ] ->
             profile(State, Op, [ OtherId ]);
@@ -3533,6 +3576,54 @@ comgroup(#state{userid=Userid} = _State, Operation, User, Args) ->
     ?DEBUG("DEFAULT(~p): ~p ~p: Operation: ~p, on User: ~p, Args: ~p", [ ?LINE, comgroups(), Userid, Operation, User, Args ]),
     {error, enoent}.
 
+
+% admin
+
+admin_operations(<<"set">>) -> ?OPERATION_SETINFO;
+admin_operations(<<"info">>) -> ?OPERATION_ABOUT;
+admin_operations(_) -> false.
+
+do_admin(?OPERATION_SETINFO = Op, User, SeqId, Args, State) ->
+    case args(Args, [<<"id">>, <<"section">>, <<"values">>]) of
+        [ Userid, Section, {struct, Values} ] ->
+            admin(State, Op, User, [ Userid, Section, Values ]);
+
+        _Wrong ->
+            ?ERROR_MSG(?MODULE_STRING ".~p do_admin: extracted: ~p", [ ?LINE, _Wrong ]),
+            Answer = make_error(SeqId, 406, <<"bad arguments">>),
+            send_element(State, (Answer)),
+            false
+    end;
+
+do_admin(?OPERATION_ABOUT = Op, User, SeqId, Args, State) ->
+    case args(Args, [<<"id">>, <<"section">>]) of
+        [ Id, Section ] ->
+            admin(State, Op, User, [ Id, Section ]);
+
+        _Wrong ->
+            ?ERROR_MSG(?MODULE_STRING ".~p do_admin: extracted: ~p", [ ?LINE, _Wrong ]),
+            Answer = make_error(SeqId, 406, <<"bad arguments">>),
+            send_element(State, (Answer)),
+            false
+    end;
+
+do_admin(_Operation, _User, _SeqId, _Args, _State) ->
+    ?DEBUG("DEFAULT(~p): do_admin ~p: Operation: ~p, on User: ~p, Seq: ~p, Args: ~p", [ ?LINE, _User, _Operation, _SeqId, _Args ]),
+    ok.
+
+admin(#state{userid=Userid} = State, ?OPERATION_SETINFO, _User, Args) ->
+    data_specific(State, hyd_admin, set_value, [ Userid | Args ]);
+
+admin(#state{userid=Userid} = State, ?OPERATION_ABOUT, _User, Args) ->
+    data_specific(State, hyd_admin, get_value, [ Userid | Args ]);
+
+admin(#state{userid=Userid} = _State, Operation, User, Args) ->
+    ?DEBUG("DEFAULT(~p): admin ~p: Operation: ~p, on User: ~p, Args: ~p", [ ?LINE, Userid, Operation, User, Args ]),
+    {error, enoent}.
+
+    
+
+
 %%
 %% Handle_action 
 %%    1) Retrieve argument of this action
@@ -3591,17 +3682,24 @@ handle_action(Operation, SeqId, Args, State) ->
 
                 {ok, ActionArgs} ->
                     Params = action_args(Args, ActionArgs),
-                    ?DEBUG(?MODULE_STRING " handle_action ActionArgs: ~p, Args: ~p, -> Params: ~p", [ ActionArgs, Args, Params ]),
-                    hyd_fqids:action_async(SeqId, Element, Operation, [ State#state.userid | Params ]),
-                    Actions = State#state.aux_fields,
-                    State#state{aux_fields=[{SeqId, [ Element, Operation, Params ]} | Actions ]}
+                    case check_args(ActionArgs, Params) of
+                        true ->
+                            ?DEBUG(?MODULE_STRING "[~5w] handle_action ActionArgs: ~p, Args: ~p, -> Params: ~p", [ ?LINE, ActionArgs, Args, Params ]),
+                            hyd_fqids:action_async(SeqId, Element, Operation, [ State#state.userid | Params ]),
+                            Actions = State#state.aux_fields,
+                            State#state{aux_fields=[{SeqId, [ Element, Operation, Params ]} | Actions ]};
 
+                        false ->
+                            Answer = make_error(SeqId, 406, <<"invalid arguments provided">>),
+                            send_element(State, Answer),
+                            State
+                    end
             end;
                 
         _ ->
             Answer = make_error(SeqId, 406, <<"missing arguments: to">>),
-            send_element(State, (Answer)),
-            false
+            send_element(State, Answer),
+            State
     end.
 
 handle_search(Operation, SeqId, Args, State) ->
@@ -3729,7 +3827,7 @@ get_args(State, Element, Operation) ->
     Args :: list() ) -> {ok, list()} | {error, term()}.
 
 operation_args(#state{db=_Db, sid=_Sid, user=Username, server=_Server}, Args) ->
-    ?DEBUG(?MODULE_STRING " [~s (~p|~p)] operation_args: Args: ~p", [ Username, seqid(), _Sid, Args ]),
+    ?DEBUG(?MODULE_STRING "[~5w] operation_args: Args: ~p", [ ?LINE, Args ]),
     %Result = rpc:call(Db, hyd_fqids, args, Args), % synchro call
     %[ Fqid, Function | _ ] = Args,
     Result = apply(hyd_fqids, args, Args),
@@ -3821,6 +3919,16 @@ handle_message({chat, {Msgid, Message}}, _From, _To, State) ->
     Packet = (Data),
     {ok, Packet};
 
+handle_message({notification, {Msgid, Message}}, _From, _To, State) ->
+    Data = [{<<"message">>, [
+                {<<"type">>,<<"notification">>},
+                to(State),
+                {<<"msgid">>, Msgid },
+                {<<"data">>, Message}
+            ]}],
+    Packet = (Data),
+    {ok, Packet};
+
 % the message Child must be deleted
 handle_message({event, {Msgid, {delete, Child}}}, From, _To, State) ->
     #jid{lresource=Ref} = From,
@@ -3836,12 +3944,14 @@ handle_message({event, {Msgid, {delete, Child}}}, From, _To, State) ->
     Packet = (Data),
     {ok, Packet};
 
-handle_message({event, {Msgid, Message}}, _From, _To, State) ->
+handle_message({event, {Msgid, Message}}, From, _To, State) ->
+    #jid{lresource=Ref} = From,
     Data = [{<<"message">>, [
                 {<<"type">>,<<"event">>},
+                {<<"from">>, Ref}, 
                 to(State),
                 {<<"msgid">>, Msgid },
-                {<<"data">>, Message}
+                {<<"event">>, Message}
             ]}],
     Packet = (Data),
     {ok, Packet};
@@ -3927,7 +4037,7 @@ data_specific(#state{db=Db, sid=_Sid, user=Username, server=_Server}, Module, Fu
             {ok, Any}
     end.
 
-data(#state{db=Db, sid=_Sid, user=Username, server=_Server}, Module, Function, Args) ->
+data(#state{sid=_Sid, user=Username, server=_Server}, Module, Function, Args) ->
     ?DEBUG(?MODULE_STRING " [~s (~p|~p)] DATA: Module: ~p, Function: ~p, Args: ~p", [ 
         Username, seqid(), _Sid, 
         Module, Function, Args ]),
@@ -4213,6 +4323,28 @@ action_args(_, [], Result) ->
     lists:reverse(Result);
 action_args(Args, [ Key | Keys ], Result) ->
     action_args(Args, Keys, [ xml:get_attr_s(Key, Args) | Result ]).
+
+% Check arguments against rules
+% max_size 
+check_args(_Args, _Params) ->
+    lists:all(fun validsize/1, _Params).
+
+validsize(X) when is_binary(X) ->
+    case size(X) < 12000 of
+        false ->
+            false;
+
+        true ->
+            case utf8_utils:count(X) < 3001 of
+                false ->
+                    false;
+
+                true ->
+                    true
+            end
+    end;
+validsize(_) ->
+    true.
 	    
 % Split from private and public properties
 % Private properties are for internal use only
@@ -4277,7 +4409,7 @@ seqid(Inc) ->
     Title :: binary() | list(),
     Content :: binary() | list()) -> true.
 
-send_notification(#state{db=Db, user=_Username, sid=_Sid, userid=Userid} = State, Extra, Class, Source, Destination, Token, Title, Content ) ->
+send_notification(#state{user=_Username, sid=_Sid, userid=Userid} = State, Extra, Class, Source, Destination, Token, Title, Content ) ->
     ExtraArgs = args(Extra, [<<"extra">>]), % theses extra args are NOT written in the db
     Args = [ Userid, Class, Source, Destination, Token, Title, Content ],
 
@@ -4316,8 +4448,8 @@ send_notification(#state{db=Db, user=_Username, sid=_Sid, userid=Userid} = State
     end.
     
 
-notification_invite(State, Args, Destination, Application, Title, Content) ->
-    send_notification(State, Args, <<"invitation">>, <<"user">>, Destination, Application, Title, Content).
+%notification_invite(State, Args, Destination, Application, Title, Content) ->
+%    send_notification(State, Args, <<"invitation">>, <<"user">>, Destination, Application, Title, Content).
 
 notification(State, ?OPERATION_INVITECONTACT, Args, Destination, Application, Title, Content) ->
     send_notification(State, Args, <<"invite">>, <<"invitation">>, Destination, Application, Title, Content);
@@ -4519,6 +4651,19 @@ handle(<<"comgroups">> = Type, Operation, SeqId, Args, State) ->
             handle_operation(Type, SeqId, Response, State)
     end;    
 
+handle(<<"admin">> = Type, Operation, SeqId, Args, #state{ sasl_state = Level } = State) when Level > 0 ->
+    case admin_operations(Operation) of
+        false ->
+            ?DEBUG(?MODULE_STRING ".~p handle_~p Admin (default): Operation: ~p, Args: ~p", [ ?LINE, Type, Operation, Args ]),
+            Answer = make_error(SeqId, 404, <<"unknown call ">>),
+            send_element(State, Answer);
+
+        OperationId ->
+            #jid{luser=User} = State#state.jid,
+            Response = do_admin(OperationId, User, SeqId, Args, State),
+            handle_operation(Type, SeqId, Response, State)
+    end;    
+
 handle(Type, Operation, SeqId, Args, State) ->
     ?DEBUG(?MODULE_STRING ".~p handle (default): Type: ~p Operation: ~p, Args: ~p", [ ?LINE, Type, Operation, Args ]),
     Answer = make_error(SeqId, 404, <<"unknown call ">>),
@@ -4560,8 +4705,8 @@ handle_operation(Type, SeqId, Response, State) ->
             send_element(State, Answer);
 
         {error, Reason} -> 
-            ?ERROR_MSG(?MODULE_STRING " handle_~s error: ~p", [ Type, Reason ]),
-            Answer = make_error(SeqId, 500, <<"internal server error">>),
+            ?ERROR_MSG(?MODULE_STRING ".~p handle_~s error: ~p", [ ?LINE, Type, Reason ]),
+            Answer = make_error(Reason, SeqId, undefined, undefined),
             send_element(State, Answer);
 
         Result ->

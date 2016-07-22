@@ -1,6 +1,6 @@
 -module(hyd_fqids).
 % Created hyd_fqids.erl the 02:14:53 (06/02/2014) on core
-% Last Modification of hyd_fqids.erl at 09:15:17 (20/11/2015) on core
+% Last Modification of hyd_fqids.erl at 21:28:32 (22/07/2016) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -11,6 +11,7 @@
 -export([
     read/1, read/2,
     args/2, args/3,
+    stats/1, stats/2,
     action/3
 ]).
 
@@ -59,6 +60,24 @@ read(Fqid) ->
     ],
     run(Ops).
 
+-spec stats(
+    Fqid :: list() | binary()) -> {ok, list()} | {error, term()}.
+
+stats(Fqid) ->
+    Ops = [
+        hyd:operation(<<"stats">>, module(), [ Fqid ])
+    ],
+    run(Ops).
+
+-spec stats(
+    FQID :: list() | binary(),
+    Userid :: list() | binary() ) -> {ok, list()} | {error, term()}.
+
+stats(FQID, Userid) ->
+    Ops = [
+        hyd:operation(<<"stats">>, module(), [ FQID, Userid ])
+    ],
+    run(Ops).
 
 -spec args(
     Type :: list() | binary(),
@@ -142,6 +161,9 @@ action_async(TransId, Any, Action, Args) ->
 
 run(Op) ->
     case hyd:call(Op) of
+        {ok, [<<"0">>]} ->
+            [];
+
         {ok, Elements } ->
             Results = lists:foldl( fun
                 ({error, _} = Error, _Acc) ->
