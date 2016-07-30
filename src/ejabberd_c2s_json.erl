@@ -568,6 +568,40 @@ authorized({action, SeqId, Args}, StateData) when is_list(Args) ->
                     end
             end;
 
+        <<"stats">> ->
+            case  fxml:get_attr_s(<<"id">>, Args) of
+                <<>> ->
+                    Answer = make_error(undefined, SeqId, 404, <<"invalid call">>),
+                    send_element(StateData, (Answer)),
+                    fsm_next_state(authorized, StateData);
+
+                Id ->
+                    case data_specific(StateData, hyd_fqids, stats, [ Id, StateData#state.userid ]) of
+                        {error, Reason} ->
+                            ?ERROR_MSG(?MODULE_STRING "[~5w] Info: error: ~p", [ ?LINE, Reason ]),
+                            Answer = make_error(Reason, SeqId, 500, <<"internal server error">>),
+                            send_element(StateData, (Answer)),
+                            fsm_next_state(authorized, StateData);
+
+                        {ok, []} ->
+                            Answer = make_answer_not_found(SeqId),
+                            send_element(StateData, (Answer)),
+                            fsm_next_state(authorized, StateData);
+
+                        {ok, Result} ->
+                            %?DEBUG(?MODULE_STRING "[~5w] Info: returns: ~p", [ ?LINE, Result ]),
+                            Answer = make_answer(SeqId, 200, Result),
+                            send_element(StateData, (Answer)),
+                            fsm_next_state(authorized, StateData);
+
+                        [] ->
+                            ?ERROR_MSG(?MODULE_STRING "[~5w] 'info': returns empty for ~p", [ ?LINE, Id ]),
+                            Answer = make_answer_not_found(SeqId),
+                            send_element(StateData, (Answer)),
+                            fsm_next_state(authorized, StateData)
+                    end
+            end;
+
         <<"new-discussion">> ->
             %DiscussionId = integer_to_list(erlang:phash2(os:timestamp(), 999999999), 5),
             %Discussion = list_to_binary(DiscussionId),
