@@ -1274,13 +1274,15 @@ handle_info({db, SeqId, Result}, StateName, #state{aux_fields=Actions} = State) 
     case Result of 
         [<<>>] ->
             ?DEBUG(?MODULE_STRING "[~5w] DB: SeqId: ~p, Error: '~p'", [ ?LINE, SeqId, <<>> ]),
-            fsm_next_state(StateName, State);
+            NewActions = lists:keydelete(SeqId, 1, Actions),
+            fsm_next_state(StateName, State#state{aux_fields=NewActions});
 
         {error, _} = Error ->
             ?ERROR_MSG(?MODULE_STRING "[~5w] DB: SeqId: ~p, Error: ~p", [ ?LINE, SeqId, Error ]),
             Packet = make_error(enoent, SeqId, undefined, undefined),
             send_element(State, Packet),
-            fsm_next_state(StateName, State);
+            NewActions = lists:keydelete(SeqId, 1, Actions),
+            fsm_next_state(StateName, State#state{aux_fields=NewActions});
 
         {ok, Response} ->  % there is many response or a complex response
             case db_results:unpack(Response) of
@@ -1288,7 +1290,8 @@ handle_info({db, SeqId, Result}, StateName, #state{aux_fields=Actions} = State) 
                     ?DEBUG(?MODULE_STRING ".~p DB: SeqId: ~p, Result: '~p'", [ ?LINE, SeqId, Answer ]),
                     Packet = make_result(SeqId, Answer),
                     send_element(State, Packet),
-                    fsm_next_state(StateName, State);
+                    NewActions = lists:keydelete(SeqId, 1, Actions),
+                    fsm_next_state(StateName, State#state{aux_fields=NewActions});
 
                 {ok, Infos, More} ->
                     ?DEBUG(?MODULE_STRING "[~5w] Async DB: SeqId: ~p, Infos: ~p", [ ?LINE, SeqId, Infos ]),
@@ -1306,14 +1309,20 @@ handle_info({db, SeqId, Result}, StateName, #state{aux_fields=Actions} = State) 
                                     fsm_next_state(StateName, State)
                             end;
 
-                        {error, _} = Error ->
+                        {error, Reason} = Error ->
                             ?DEBUG(?MODULE_STRING "[~5w] DB: SeqId: ~p, Error: ~p", [ ?LINE, SeqId, Error ]),
-                            fsm_next_state(StateName, State)
+                            Packet = make_error(Reason, SeqId, undefined, undefined),
+                            send_element(State, Packet),
+                            NewActions = lists:keydelete(SeqId, 1, Actions),
+                            fsm_next_state(StateName, State#state{aux_fields=NewActions})
                     end;
 
-                {error, _} = Error ->
+                {error, Reason} = Error ->
                     ?DEBUG(?MODULE_STRING "[~5w] DB: SeqId: ~p, Error: ~p", [ ?LINE, SeqId, Error ]),
-                    fsm_next_state(StateName, State)
+                    Packet = make_error(Reason, SeqId, undefined, undefined),
+                    send_element(State, Packet),
+                    NewActions = lists:keydelete(SeqId, 1, Actions),
+                    fsm_next_state(StateName, State#state{aux_fields=NewActions})
             end
     end;
 
