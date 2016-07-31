@@ -950,11 +950,11 @@ authorized({action, SeqId, Args}, StateData) when is_list(Args) ->
                 Operation ->
                     handle(Type, Operation, SeqId, Args, StateData),
                     fsm_next_state(authorized, StateData)
-            end;
+            end
 
-        _Any ->
-            ?ERROR_MSG(?MODULE_STRING "[~5w] Unhandled action: ~p\n~p", [ ?LINE, _Any, Args]),
-            fsm_next_state(authorized, StateData)
+        %_Any ->
+        %    ?ERROR_MSG(?MODULE_STRING " Unhandled action: ~p\n~p", [_Any, Args]),
+        %    fsm_next_state(authorized, StateData)
 
     end;
 
@@ -1273,13 +1273,15 @@ handle_info({db, SeqId, Result}, StateName, #state{aux_fields=Actions} = State) 
     case Result of 
         [<<>>] ->
             ?DEBUG(?MODULE_STRING "[~5w] DB: SeqId: ~p, Error: '~p'", [ ?LINE, SeqId, <<>> ]),
-            fsm_next_state(StateName, State);
+            NewActions = lists:keydelete(SeqId, 1, Actions),
+            fsm_next_state(StateName, State#state{aux_fields=NewActions});
 
         {error, _} = Error ->
             ?ERROR_MSG(?MODULE_STRING "[~5w] DB: SeqId: ~p, Error: ~p", [ ?LINE, SeqId, Error ]),
             Packet = make_error(enoent, SeqId, undefined, undefined),
             send_element(State, Packet),
-            fsm_next_state(StateName, State);
+            NewActions = lists:keydelete(SeqId, 1, Actions),
+            fsm_next_state(StateName, State#state{aux_fields=NewActions});
 
         {ok, Response} ->  % there is many response or a complex response
             case db_results:unpack(Response) of
@@ -1287,7 +1289,8 @@ handle_info({db, SeqId, Result}, StateName, #state{aux_fields=Actions} = State) 
                     ?DEBUG(?MODULE_STRING ".~p DB: SeqId: ~p, Result: '~p'", [ ?LINE, SeqId, Answer ]),
                     Packet = make_result(SeqId, Answer),
                     send_element(State, Packet),
-                    fsm_next_state(StateName, State);
+                    NewActions = lists:keydelete(SeqId, 1, Actions),
+                    fsm_next_state(StateName, State#state{aux_fields=NewActions});
 
                 {ok, Infos, More} ->
                     ?DEBUG(?MODULE_STRING "[~5w] Async DB: SeqId: ~p, Infos: ~p", [ ?LINE, SeqId, Infos ]),
@@ -1305,18 +1308,20 @@ handle_info({db, SeqId, Result}, StateName, #state{aux_fields=Actions} = State) 
                                     fsm_next_state(StateName, State)
                             end;
 
-                        {error, Error} ->
+                        {error, Reason} = Error ->
                             ?DEBUG(?MODULE_STRING "[~5w] DB: SeqId: ~p, Error: ~p", [ ?LINE, SeqId, Error ]),
-                            Packet = make_error(Error, SeqId, undefined, undefined),
+                            Packet = make_error(Reason, SeqId, undefined, undefined),
                             send_element(State, Packet),
-                            fsm_next_state(StateName, State)
+                            NewActions = lists:keydelete(SeqId, 1, Actions),
+                            fsm_next_state(StateName, State#state{aux_fields=NewActions})
                     end;
 
-                {error, Error} ->
+                {error, Reason} = Error ->
                     ?DEBUG(?MODULE_STRING "[~5w] DB: SeqId: ~p, Error: ~p", [ ?LINE, SeqId, Error ]),
-                    Packet = make_error(Error, SeqId, undefined, undefined),
+                    Packet = make_error(Reason, SeqId, undefined, undefined),
                     send_element(State, Packet),
-                    fsm_next_state(StateName, State)
+                    NewActions = lists:keydelete(SeqId, 1, Actions),
+                    fsm_next_state(StateName, State#state{aux_fields=NewActions})
             end
     end;
 
@@ -1402,7 +1407,7 @@ terminate(_Reason, session_established = StateName, StateData) ->
     (StateData#state.sockmod):close(StateData#state.socket),
     ok;
 
-terminate(_Reason, authorized = StateName, #state{ authenticated = Authenticated } = StateData) ->
+terminate(_Reason, authorized = _StateName, #state{ authenticated = Authenticated } = StateData) ->
     case Authenticated of
         true ->
             ?INFO_MSG(?MODULE_STRING "[~5w] Close authorized session for SID: ~p, Ressource ~p, Userid: ~p User: ~p", [
@@ -2452,7 +2457,7 @@ do_user(?OPERATION_GETCONFIGURATION, User, _SeqId, _Args, State) ->
             Result
     end;
 
-do_user(?OPERATION_GETOTHERCONTACTTREE = Op, User, SeqId, Args, State) ->
+do_user(?OPERATION_GETOTHERCONTACTTREE = Op, _User, SeqId, Args, State) ->
     case args(Args, [<<"userid">>]) of
         [ OtherId ] ->
             profile(State, Op, [ OtherId ]);
@@ -3722,12 +3727,11 @@ handle_action(Operation, SeqId, Args, State) ->
                             send_element(State, Answer),
                             State
                     end
-
             end;
                 
         _ ->
             Answer = make_error(SeqId, 406, <<"missing arguments: to">>),
-            send_element(State, (Answer)),
+            send_element(State, Answer),
             State
     end.
 
@@ -3856,7 +3860,7 @@ get_args(State, Element, Operation) ->
     Args :: list() ) -> {ok, list()} | {error, term()}.
 
 operation_args(#state{db=_Db, sid=_Sid, user=Username, server=_Server}, Args) ->
-    ?DEBUG(?MODULE_STRING " [~s (~p|~p)] operation_args: Args: ~p", [ Username, seqid(), _Sid, Args ]),
+    ?DEBUG(?MODULE_STRING "[~5w] operation_args: Args: ~p", [ ?LINE, Args ]),
     %Result = rpc:call(Db, hyd_fqids, args, Args), % synchro call
     %[ Fqid, Function | _ ] = Args,
     Result = apply(hyd_fqids, args, Args),
@@ -4054,7 +4058,7 @@ data_specific(#state{db=Db, sid=_Sid, user=Username, server=_Server}, Module, Fu
             {ok, Any}
     end.
 
-data(#state{db=Db, sid=_Sid, user=Username, server=_Server}, Module, Function, Args) ->
+data(#state{sid=_Sid, user=Username, server=_Server}, Module, Function, Args) ->
     ?DEBUG(?MODULE_STRING " [~s (~p|~p)] DATA: Module: ~p, Function: ~p, Args: ~p", [ 
         Username, seqid(), _Sid, 
         Module, Function, Args ]),
@@ -4426,7 +4430,7 @@ seqid(Inc) ->
     Title :: binary() | list(),
     Content :: binary() | list()) -> true.
 
-send_notification(#state{db=Db, user=_Username, sid=_Sid, userid=Userid} = State, Extra, Class, Source, Destination, Token, Title, Content ) ->
+send_notification(#state{user=_Username, sid=_Sid, userid=Userid} = State, Extra, Class, Source, Destination, Token, Title, Content ) ->
     ExtraArgs = args(Extra, [<<"extra">>]), % theses extra args are NOT written in the db
     Args = [ Userid, Class, Source, Destination, Token, Title, Content ],
 
@@ -4465,8 +4469,8 @@ send_notification(#state{db=Db, user=_Username, sid=_Sid, userid=Userid} = State
     end.
     
 
-notification_invite(State, Args, Destination, Application, Title, Content) ->
-    send_notification(State, Args, <<"invitation">>, <<"user">>, Destination, Application, Title, Content).
+%notification_invite(State, Args, Destination, Application, Title, Content) ->
+%    send_notification(State, Args, <<"invitation">>, <<"user">>, Destination, Application, Title, Content).
 
 notification(State, ?OPERATION_INVITECONTACT, Args, Destination, Application, Title, Content) ->
     send_notification(State, Args, <<"invite">>, <<"invitation">>, Destination, Application, Title, Content);
@@ -4617,17 +4621,17 @@ action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, E
         { <<"child">>, Child}]),
     mod_chat:route(Host, Element, Creator, message, Packet);
 
-% realtime messages for article childs
-action(#state{user=Username, userid=Creator, server=Host} = _State, Element, Type, <<"addChild">>, [Child], _Result) when
-    Type =:= <<"article">> ->
-
-    RoomType = Type,
-    mod_chat:create_room(Host, RoomType, Creator, Element, []), % this will create synchronously the room if needed
-    Packet = make_packet( _State, <<"event">>, [
-        { <<"new">>, Element}
-    ]),
-    mod_chat:route(Host, Element, Creator, message, Packet),
-    mod_chat:route(Host, Element, Creator, add, [Creator]);
+% realtime messages for article childs FEATURE IS POSTPONED
+% action(#state{user=Username, userid=Creator, server=Host} = _State, Element, Type, <<"addChild">>, [Child], _Result) when
+%     Type =:= <<"article">> ->
+% 
+%     RoomType = Type,
+%     mod_chat:create_room(Host, RoomType, Creator, Element, []), % this will create synchronously the room if needed
+%     Packet = make_packet( _State, <<"event">>, [
+%         { <<"new">>, Element}
+%     ]),
+%     mod_chat:route(Host, Element, Creator, message, Packet),
+%     mod_chat:route(Host, Element, Creator, add, [Creator]);
 
 action(#state{user=Username, sid=Sid} = _State, _Element, _Type, _Action, _Args, _Result) ->
     ?DEBUG(?MODULE_STRING " [~s (~p|~p)] action on type ~p: ~p:~p(~p):\n~p", [ Username, seqid(), Sid, _Type, _Element, _Action, _Args, _Result ]),
