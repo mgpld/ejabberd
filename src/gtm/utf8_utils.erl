@@ -18,5 +18,7 @@ count(<<_/utf8,_/utf8,_/utf8,Rest/binary>>, Count) ->
 count(<<_/utf8,_/utf8,Rest/binary>>, Count) ->
     count(Rest, Count + 2);
 count(<<_/utf8,Rest/binary>>, Count) ->
+    count(Rest, Count + 1);
+count(<<_,Rest/binary>>, Count) ->
     count(Rest, Count + 1).
 
