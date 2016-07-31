@@ -164,7 +164,7 @@
     socket_monitor,
     db,
     timeout,
-    sasl_state,
+    sasl_state = 0,
     access,
     shaper,
     zlib = false,
@@ -592,7 +592,6 @@ authorized({action, SeqId, Args}, StateData) when is_list(Args) ->
                             %?DEBUG(?MODULE_STRING "[~5w] Info: returns: ~p", [ ?LINE, Result ]),
                             Answer = make_answer(SeqId, 200, Result),
                             send_element(StateData, (Answer)),
-                            delivered_notification( StateData, Id, Result),
                             fsm_next_state(authorized, StateData);
 
                         [] ->
@@ -967,7 +966,7 @@ authorized({message, SeqId, Args}, StateData) ->
                     fsm_next_state(authorized, StateData);
 
                 To ->
-                    %?DEBUG("xml: ~p", [ xmlelement("message", Args) ]),
+                    %?DEBUG("fxml: ~p", [ xmlelement("message", Args) ]),
                     %Pids = get_members(To),
                     
                     ToJid = jlib:string_to_jid(To),
@@ -3590,6 +3589,7 @@ comgroup(#state{userid=Userid} = _State, Operation, User, Args) ->
 
 admin_operations(<<"set">>) -> ?OPERATION_SETINFO;
 admin_operations(<<"info">>) -> ?OPERATION_ABOUT;
+admin_operations(<<"user">>) -> ?OPERATION_STOREPROFILE;
 admin_operations(_) -> false.
 
 do_admin(?OPERATION_SETINFO = Op, User, SeqId, Args, State) ->
@@ -3616,8 +3616,29 @@ do_admin(?OPERATION_ABOUT = Op, User, SeqId, Args, State) ->
             false
     end;
 
+do_admin(?OPERATION_STOREPROFILE = Op, User, SeqId, Args, State) ->
+    case args(Args, [<<"id">>, <<"values">>]) of
+        [ Id, {struct, Values} ] ->
+            case args(Values, [<<"firstname">>, <<"lastname">>, <<"domain">>]) of
+                [ Firstname, Lastname, Domain ] ->
+                    admin(State, Op, User, [ Id, Firstname, Lastname, Domain ]);
+
+                _ ->
+                    Answer = make_error(SeqId, 406, <<"missing arguments">>),
+                    send_element(State, (Answer)),
+                    false
+            end;
+
+        _Wrong ->
+            ?ERROR_MSG(?MODULE_STRING ".~p do_admin: extracted: ~p", [ ?LINE, _Wrong ]),
+            Answer = make_error(SeqId, 406, <<"bad arguments">>),
+            send_element(State, (Answer)),
+            false
+    end;
+
+
 do_admin(_Operation, _User, _SeqId, _Args, _State) ->
-    ?DEBUG("DEFAULT(~p): do_admin ~p: Operation: ~p, on User: ~p, Seq: ~p, Args: ~p", [ ?LINE, _User, _Operation, _SeqId, _Args ]),
+    ?DEBUG(?MODULE_STRING "[~5w] DEFAULT: do_admin ~p: Operation: ~p, on User: ~p, Seq: ~p, Args: ~p", [ ?LINE, _User, _Operation, _SeqId, _Args ]),
     ok.
 
 admin(#state{userid=Userid} = State, ?OPERATION_SETINFO, _User, Args) ->
@@ -3626,11 +3647,12 @@ admin(#state{userid=Userid} = State, ?OPERATION_SETINFO, _User, Args) ->
 admin(#state{userid=Userid} = State, ?OPERATION_ABOUT, _User, Args) ->
     data_specific(State, hyd_admin, get_value, [ Userid | Args ]);
 
-admin(#state{userid=Userid} = _State, Operation, User, Args) ->
-    ?DEBUG("DEFAULT(~p): admin ~p: Operation: ~p, on User: ~p, Args: ~p", [ ?LINE, Userid, Operation, User, Args ]),
-    {error, enoent}.
+admin(#state{userid=Userid} = State, ?OPERATION_STOREPROFILE, _User, Args) ->
+    data_specific(State, hyd_admin, create_user, [ Userid | Args ]);
 
-    
+admin(#state{userid=Userid} = _State, Operation, User, Args) ->
+    ?DEBUG(?MODULE_STRING "[~5w] DEFAULT: admin ~p: Operation: ~p, on User: ~p, Args: ~p", [ ?LINE, Userid, Operation, User, Args ]),
+    {error, enoent}.
 
 
 %%
@@ -4322,7 +4344,7 @@ action_args(Args, [ Key | Keys ], Result) ->
     action_args(Args, Keys, [ fxml:get_attr_s(Key, Args) | Result ]).
 
 % Check arguments against rules
-% max_size 
+% max_size
 check_args(_Args, _Params) ->
     lists:all(fun validsize/1, _Params).
 
@@ -4546,7 +4568,7 @@ action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, E
     Type =:= <<"group">>;
     Type =:= <<"thread">> ->
 
-    ?DEBUG(?MODULE_STRING " [~s (~p|~p)] action ~p ~p:~p(~p): ~p", [ _Username, seqid(), _Sid, Element, Type, "ADDMEMBER", [Otherid], Result ]),
+    ?DEBUG(?MODULE_STRING " [~s (~p|~p)] action ~p ~p:~p(~p): ~p", [ _Username, seqid(), _Sid, Element, Type, "addmember", [Otherid], Result ]),
 
     mod_chat:route(Host, Element, Creator, add, [Otherid]);
 
@@ -4554,7 +4576,7 @@ action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, E
     Type =:= <<"group">>;
     Type =:= <<"thread">> ->
 
-    ?DEBUG(?MODULE_STRING " [~s (~p|~p)] action ~p ~p:~p(~p): ~p", [ _Username, seqid(), _Sid, Element, Type, "DELMEMBER", [Otherid], Result ]),
+    ?DEBUG(?MODULE_STRING " [~s (~p|~p)] action ~p ~p:~p(~p): ~p", [ _Username, seqid(), _Sid, Element, Type, "delmember", [Otherid], Result ]),
 
     mod_chat:route(Host, Element, Creator, del, [Otherid]);
 
@@ -4597,6 +4619,18 @@ action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, E
         { <<"child">>, Child}]),
     mod_chat:route(Host, Element, Creator, message, Packet);
 
+% realtime messages for article childs FEATURE IS POSTPONED
+% action(#state{user=Username, userid=Creator, server=Host} = _State, Element, Type, <<"addChild">>, [Child], _Result) when
+%     Type =:= <<"article">> ->
+% 
+%     RoomType = Type,
+%     mod_chat:create_room(Host, RoomType, Creator, Element, []), % this will create synchronously the room if needed
+%     Packet = make_packet( _State, <<"event">>, [
+%         { <<"new">>, Element}
+%     ]),
+%     mod_chat:route(Host, Element, Creator, message, Packet),
+%     mod_chat:route(Host, Element, Creator, add, [Creator]);
+
 action(#state{user=Username, sid=Sid} = _State, _Element, _Type, _Action, _Args, _Result) ->
     ?DEBUG(?MODULE_STRING " [~s (~p|~p)] action on type ~p: ~p:~p(~p):\n~p", [ Username, seqid(), Sid, _Type, _Element, _Action, _Args, _Result ]),
     ok.
@@ -4638,7 +4672,7 @@ handle(<<"pages">> = Type, Operation, SeqId, Args, State) ->
 handle(<<"comgroups">> = Type, Operation, SeqId, Args, State) ->
     case comgroup_operations(Operation) of
         false ->
-            ?DEBUG(?MODULE_STRING ".~p handle_~p Page (default): Operation: ~p, Args: ~p", [ ?LINE, Type, Operation, Args ]),
+            ?DEBUG(?MODULE_STRING ".~p handle_~p Comgroups (default): Operation: ~p, Args: ~p", [ ?LINE, Type, Operation, Args ]),
             Answer = make_error(SeqId, 404, <<"unknown call ">>),
             send_element(State, Answer);
 
@@ -4648,7 +4682,7 @@ handle(<<"comgroups">> = Type, Operation, SeqId, Args, State) ->
             handle_operation(Type, SeqId, Response, State)
     end;    
 
-handle(<<"admin">> = Type, Operation, SeqId, Args, #state{ sasl_state = Level } = State) when Level > 0 ->
+handle(<<"admin">> = Type, Operation, SeqId, Args, #state{ sasl_state = Level } = State) when Level >= ?ROLE_SUPERVISOR ->
     case admin_operations(Operation) of
         false ->
             ?DEBUG(?MODULE_STRING ".~p handle_~p Admin (default): Operation: ~p, Args: ~p", [ ?LINE, Type, Operation, Args ]),
