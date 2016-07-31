@@ -11,6 +11,7 @@
 -export([
     read/1, read/2,
     args/2, args/3,
+    stats/1, stats/2,
     action/3
 ]).
 
@@ -59,6 +60,24 @@ read(Fqid) ->
     ],
     run(Ops).
 
+-spec stats(
+    Fqid :: list() | binary()) -> {ok, list()} | {error, term()}.
+
+stats(Fqid) ->
+    Ops = [
+        hyd:operation(<<"stats">>, module(), [ Fqid ])
+    ],
+    run(Ops).
+
+-spec stats(
+    FQID :: list() | binary(),
+    Userid :: list() | binary() ) -> {ok, list()} | {error, term()}.
+
+stats(FQID, Userid) ->
+    Ops = [
+        hyd:operation(<<"stats">>, module(), [ FQID, Userid ])
+    ],
+    run(Ops).
 
 -spec args(
     Type :: list() | binary(),
