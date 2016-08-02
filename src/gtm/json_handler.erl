@@ -1,6 +1,6 @@
 -module(json_handler).
 % Created json_handler.erl the 20:02:14 (27/01/2016) on core
-% Last Modification of json_handler.erl at 07:29:46 (28/01/2016) on core
+% Last Modification of json_handler.erl at 21:20:46 (02/08/2016) on core
 % 
 % Author: "ak" <ak@harmonygroup.net>
 
@@ -45,7 +45,7 @@ response(<<"POST">>, true, Req, #state{count=Count} = State) ->
     {ok, PostVals, Req2} = cowboy_req:body_qs(Req),
     ?DEBUG(?MODULE_STRING " PostVals: ~p", [ PostVals ]),
     Id = grab(<<"id">>, PostVals),
-    Token = grab(<<"token">>, PostVals),
+    %Token = grab(<<"token">>, PostVals),
     UserInfos = hyd_users:internal(Id),
     {ok, Req3} = cowboy_req:reply(200, [
         {<<"content-type">>, <<"application/json">>}
