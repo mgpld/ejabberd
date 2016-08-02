@@ -169,6 +169,19 @@ start_listener({Port, _Ip, _}, Opts) ->
 
     RtState = sockjs_handler:init_state(<<"/rt">>, fun service_ej/3, #sockjs_state{}, []),
 
+    %LoginState = login_handler:init_state(<<"/login">>, undefined),
+
+    {ok, _} = ranch:start_listener(json_plain, 50,
+        ranch_tcp, [{port, Port + 1}], json_protocol, []),
+
+%    {ok, _} = ranch:start_listener(uploader_secure, 50,
+%       ranch_ssl, [
+%           {port, 5556},
+%           {certfile, "uploader.cert.pem"},
+%           {version, 'tlsv1.2'},
+%           {ciphers,[{dhe_rsa, aes_256_cbc, sha}]} % {dhe_rsa,aes_256_cbc,sha}
+%       ], uploader_protocol, []),
+    
     VhostRoutes = [
         {<<"/sockjs/[...]">>, sockjs_cowboy_handler, SockjsState},
         {<<"/rt/[...]">>, sockjs_cowboy_handler, RtState},
@@ -205,7 +218,7 @@ handle_cast({become_controller, C2SPid}, State) ->
 	{noreply, NSt};
 
 handle_cast({recv, Data}, #state{ conn=C } = State) ->
-    ?DEBUG(?MODULE_STRING ".~p Received from: ~p\n~s\n", [ ?LINE, C, Data]),
+    ?DEBUG(?MODULE_STRING "[~5w] Received from: ~p\n~s\n", [ ?LINE, C, Data]),
     case sockjs_json:decode(Data) of
         {ok, Decoded} ->
             handle_data( Decoded, State ),
@@ -242,7 +255,7 @@ code_change(_OldVsn, State, _Extra) ->
 %% Internal
 
 service_ej(Conn, init, State) ->
-    ?DEBUG(?MODULE_STRING ".~p New Connection: ~p, (~p)", [ ?LINE, Conn, State ]),
+    ?DEBUG(?MODULE_STRING "[~5w] New Connection: ~p, (~p)", [ ?LINE, Conn, State ]),
     {ok, Pid} = ejabberd_sockjs:start_supervised(Conn),
     {ok, State#sockjs_state{conn_pid = Pid}};
 
@@ -254,7 +267,7 @@ service_ej(_Conn, {recv, _} = Packet, State) ->
     {ok, State};
 
 service_ej(_Conn, closed, #sockjs_state{ conn_pid=Pid } = State) ->
-    ?DEBUG(?MODULE_STRING " Conn: ~p, closed !, State: ~p", [ _Conn, State ]),
+    ?DEBUG(?MODULE_STRING "[~5w] Conn: ~p, closed !, State: ~p", [ ?LINE, _Conn, State ]),
     gen_server:cast(Pid, stop),
     {ok, State}.
 
@@ -333,15 +346,16 @@ invite(Id, Args) ->
 handle_data( Data, #state{c2s_pid=Client,conn=Conn} = _State ) ->
     case parse(Data) of
         [] ->
-            ?ERROR_MSG(?MODULE_STRING " Error don't handle:\n~p", [ Data ]);
+            ?ERROR_MSG(?MODULE_STRING "[~5w] Error don't handle:\n~p", [ ?LINE, Data ]);
 
         {undefined, Type, Args} ->
-            ?ERROR_MSG(?MODULE_STRING " Unhandled json message type: ~p, args: ~p", [ Type, Args ]),
+            ?ERROR_MSG(?MODULE_STRING "[~5w] Unhandled json message type: ~p, args: ~p", [ ?LINE, Type, Args ]),
             Packet = [{<<"error">>, [ 
                 {<<"code">>, 999},
                 {<<"type">>, <<"protocol">>}
             ]}],
-            sockjs_session:send(Packet, Conn),
+            Json = sockjs_json:encode(Packet),
+            sockjs_session:send(Json, Conn),
             ok;
 	    
         Event ->
