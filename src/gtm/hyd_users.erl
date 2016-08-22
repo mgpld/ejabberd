@@ -1,6 +1,6 @@
 -module(hyd_users).
 % Created hyd_users.erl the 17:16:36 (12/10/2013) on core
-% Last Modification of hyd_users.erl at 03:19:21 (20/11/2015) on core
+% Last Modification of hyd_users.erl at 22:45:47 (22/08/2016) on core
 %
 % Author: rolph
 % Harmony Data - Users
@@ -456,7 +456,7 @@ delete_contact(UserId,ContactId) ->
     Userid :: non_neg_integer() ) -> list().
 
 list_blocked(Userid) ->
-    childs(Userid, ["contacts","blocked"]).
+    childs(Userid, ["contacts","blocked"], fun(X) -> contact_info(Userid, X) end).
 
 list_blocked(Userid, Contactid) ->
     case read(Userid, [<<"contacts">>,<<"blocked">>,<<"items">>, Contactid]) of
