@@ -1,10 +1,10 @@
 -module(db_results).
 % Created db_results.erl the 12:24:07 (27/05/2014) on core
-% Last Modification of db_results.erl at 18:46:30 (02/09/2015) on core
+% Last Modification of db_results.erl at 21:47:28 (30/08/2016) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
-%-define(debug, true).
+-define(debug, true).
 
 -ifdef(debug).
 -define(DEBUG(Format, Args),
@@ -16,6 +16,9 @@
 -export([
     unpack/1
 ]).
+
+unpack(true) ->
+    {ok, true};
 
 unpack(Data) ->
     %%?DEBUG(" -- Unpack --( ~p bytes )\n~p\n", [ iolist_size(Data), Data ]),

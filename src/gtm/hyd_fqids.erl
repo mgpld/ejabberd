@@ -1,6 +1,6 @@
 -module(hyd_fqids).
 % Created hyd_fqids.erl the 02:14:53 (06/02/2014) on core
-% Last Modification of hyd_fqids.erl at 21:28:32 (22/07/2016) on core
+% Last Modification of hyd_fqids.erl at 22:34:49 (30/08/2016) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -25,7 +25,7 @@
 ]).
 -endif.
 
-%-define(debug, true).
+-define(debug, true).
 
 -ifdef(debug).
 -define(DEBUG(Format, Args),
@@ -197,6 +197,9 @@ run(Op) ->
 
 parse_indexed(Op) ->
     case run(Op) of
+        [true] ->
+            {ok, []};
+
         [] ->
             {ok, []};
 

@@ -1,6 +1,6 @@
 -module(hyd_users).
 % Created hyd_users.erl the 17:16:36 (12/10/2013) on core
-% Last Modification of hyd_users.erl at 22:45:47 (22/08/2016) on core
+% Last Modification of hyd_users.erl at 22:23:28 (30/08/2016) on core
 %
 % Author: rolph
 % Harmony Data - Users
@@ -223,9 +223,12 @@ foreach(UserId,Subscripts,Fun) ->
         hyd:operation(<<"childs">>, module(), [ UserId, Args ])
     ],
     case hyd:call(Ops) of
-        {ok, [Results]} ->  % One Op means One result
+        {ok, [true]} ->
+            [];
+
+        {ok, [Result]} ->  % One Op means One result
             %Results = db_results:unpack(Packed),
-            case db_results:unpack( Results ) of
+            case db_results:unpack( Result ) of
                 {ok, Elements} ->
                     lists:map( fun(X) ->
                         Fun( X )
@@ -595,6 +598,9 @@ contacts_info_from_category(Userid, Category) ->
         [] ->
             [];
 
+        [true] ->
+            [];
+
         Contacts ->
             %?DEBUG("contacts_info_from_category: Userid: ~p, Category: ~p\n~p", [ Userid, Category, Contacts ]),
             lists:foldl(fun(Contact, Result) ->
@@ -617,16 +623,22 @@ contacts_info_from_invitations(Userid,Type) ->
         [] ->
             [];
 
-	Contacts ->
-	    lists:foldl(fun({Contact, Date}, Result) ->
-            %case info(Contact, <<"visible">>) of
-            case canonical(Contact) of
-                [] ->
-                    Result;
-                Values ->
-                   [ [ {<<"id">>, Contact}, {<<"timestamp">>, Date} | Values ] | Result ]
-            end
-	    end, [], Contacts)
+        [true] ->
+            [];
+
+	    Contacts ->
+            lists:foldl(fun({Contact, Date}, Result) ->
+                %case info(Contact, <<"visible">>) of
+                case canonical(Contact) of
+                    [] ->
+                        Result;
+                    [true] ->
+                        Result;
+
+                    Values ->
+                       [ [ {<<"id">>, Contact}, {<<"timestamp">>, Date} | Values ] | Result ]
+                end
+            end, [], Contacts)
     end.
 
 -spec contacts_search(
@@ -690,12 +702,15 @@ contact_info(Userid, Contactid) ->
 run(Op) ->
     case hyd:call(Op) of
         {ok, Elements } ->
+            ?DEBUG("\nOp: ~p\nResponse: ~p\n\n", [ Op, Elements ]),
             
             case lists:foldl( fun
                 (_, {error, _} = _Acc) ->
                     _Acc;
                 ({error, _} = _Error, _) ->
                     _Error;
+                % (true, Acc) ->
+                %     [ true | Acc];
                 (X, Acc) ->
                     case db_results:unpack(X) of
                         {ok, Result} ->
@@ -771,6 +786,9 @@ info_contact(Userid, Contactid, Section) ->
     case connected_contacts(Userid, Contactid) of
         [] ->
             [];
+        
+        [true] ->
+            [];
 
         [_Timestamp] ->
             infotree_get_value(Contactid, Section)
@@ -779,6 +797,9 @@ info_contact(Userid, Contactid, Section) ->
 info_contact(Userid, Contactid, Section, <<"addresses">>) ->
     case connected_contacts(Userid, Contactid) of
         [] ->
+            [];
+
+        [true] ->
             [];
 
         [_Timestamp] ->
@@ -791,6 +812,9 @@ info_contact(_Userid, _Contactid, _Section, _) ->
 info_contact(Userid, Contactid, Section, <<"address">>, Index) ->
     case connected_contacts(Userid, Contactid) of
         [] ->
+            [];
+
+        [true] ->
             [];
 
         [_Timestamp] ->

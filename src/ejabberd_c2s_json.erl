@@ -1411,12 +1411,13 @@ terminate(_Reason, session_established = StateName, StateData) ->
 terminate(_Reason, authorized = _StateName, #state{ authenticated = Authenticated } = StateData) ->
     case Authenticated of
         true ->
-            ?INFO_MSG(?MODULE_STRING "[~5w] Close authorized session for SID: ~p, Ressource ~p, Userid: ~p User: ~p", [
+            ?INFO_MSG(?MODULE_STRING "[~5w] Close authorized session for SID: ~p, Ressource ~p, Userid: ~p User: ~p Reason: ~p", [
                     ?LINE,
                     StateData#state.sid,
                     StateData#state.resource,
                     StateData#state.userid,
-                    StateData#state.user
+                    StateData#state.user,
+                    _Reason
                     ]),
 
             %% [GTM] Log end of session
@@ -2717,8 +2718,20 @@ do_contact(Op, User, SeqId, Args, State) when
     end;
 
 do_contact(?OPERATION_INVITECONTACT = Op, User, SeqId, Args, State) ->
-    case args(Args, [<<"userid">>]) of
-        [ _Userid ] = Params ->
+    Params = case args(Args, [<<"userid">>]) of
+        [ _Userid ] = _Args ->
+            _Args;
+            
+        _ ->
+            false
+    end,
+    case Params of 
+        false ->
+            Answer = make_error(SeqId, 406, <<"missing arguments">>),
+            send_element(State, Answer),
+            false;
+
+        [ Userid ] ->
             Do = fun() ->
                 contacts(State, Op, User, Params)
             end,
@@ -2726,28 +2739,10 @@ do_contact(?OPERATION_INVITECONTACT = Op, User, SeqId, Args, State) ->
                 Application = <<"com.harmony.contacts">>,
                 Title = <<"Contact">>,
                 Text = <<>>,
-                notification(State, Op, Args, _Userid, Application, Title, Text),
+                notification(State, Op, Args, Userid, Application, Title, Text),
                 true
             end,
-            ok(Do, Success);
-
-            % case contacts(State, Op, User, Params) of
-            %     {ok, []} ->
-            %         Application = <<"com.harmony.contacts">>,
-            %         Title = <<"Contact">>,
-            %         Text = <<>>,
-            %         %notification_invite( State, Args, _Userid, Application, Title, Text),
-            %         notification(State, Op, Args, _Userid, Application, Title, Text),
-            %         true;
-
-            %     _Any ->
-            %         _Any
-            % end;
-
-        _ ->
-            Answer = make_error(SeqId, 406, <<"missing arguments">>),
-            send_element(State, (Answer)),
-            false
+            ok(Do, Success)
     end;
 
 do_contact(Op, User, SeqId, Args, State) when 
@@ -2799,7 +2794,17 @@ do_contact(Op, User, SeqId, Args, State) when
             contacts(State, ?OPERATION_DELETECONTACTINFO, User, Params);
 
         [ _Contactid ] = Params -> % remove the contact
-            contacts(State, Op, User, Params);
+            Do = fun() ->
+                contacts(State, Op, User, Params)
+            end,
+            Success = fun() ->
+                Application = <<"com.harmony.contacts">>,
+                Title = <<"Contact">>,
+                Text = <<>>,
+                notification(State, Op, Args, _Contactid, Application, Title, Text),
+                true
+            end,
+            ok(Do, Success);
 
         _ ->
             Answer = make_error(SeqId, 406, <<"missing arguments">>),
@@ -4005,7 +4010,8 @@ userid(State, User, Server) ->
     Args :: list() ) -> [] | list() | {error, term()}.
 
 data_specific(#state{db=Db, sid=_Sid, user=Username, server=_Server}, Module, Function, Args) ->
-    ?DEBUG(?MODULE_STRING " [~s (~p|~p)] data_specific: Db: ~p  apply(~p, ~p, ~p)", [ 
+    ?DEBUG(?MODULE_STRING "[~5w] [~s (~p|~p)] data_specific: Db: ~p  apply(~p, ~p, ~p)", [ 
+        ?LINE,
         Username, seqid(), _Sid,
         Db, Module, Function, Args ]),
 
@@ -4019,6 +4025,9 @@ data_specific(#state{db=Db, sid=_Sid, user=Username, server=_Server}, Module, Fu
 
         [] ->
             [];
+
+        [true] ->
+            {ok, true};
 
         {ok, ["0"]} -> % success
             <<"ok">>;
@@ -4067,6 +4076,9 @@ data(#state{sid=_Sid, user=Username, server=_Server}, Module, Function, Args) ->
         [ {error, _} = Error | _ ] -> % backend app error
             ?ERROR_MSG(?MODULE_STRING " [~s (~p|~p)] data: backend error: ~p, call: ~p:~p ~p", [ Username, seqid(), _Sid, Error, Module, Function, Args ]),
             Error;
+
+        [true] ->
+            {ok, []};
 
         [] ->
             {ok, []}; % empty response because nothing was found or done
@@ -4469,6 +4481,9 @@ notification(State, ?OPERATION_ACCEPTCONTACT, Args, Destination, Application, Ti
 notification(State, ?OPERATION_REFUSEINVITATION, Args, Destination, Application, Title, Content) ->
     send_notification(State, Args, <<"refuse">>, <<"invitation">>, Destination, Application, Title, Content);
 
+notification(State, ?OPERATION_DELETECONTACT, Args, Destination, Application, Title, Content) ->
+    send_notification(State, Args, <<"delete">>, <<"contact">>, Destination, Application, Title, Content);
+
 notification(_State, _Op, _, _, _, _, _) ->
     ok.
 
@@ -4615,7 +4630,7 @@ action(#state{user=Username, sid=Sid} = _State, _Element, _Type, _Action, _Args,
 
 ok( Do, Success ) ->
     case Do() of
-        {ok, []} ->
+        {ok, true} ->
             Success();
         _Any ->
             _Any
