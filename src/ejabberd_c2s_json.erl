@@ -2620,7 +2620,7 @@ handle_contact(Operation, SeqId, Args, State) ->
                 false -> % error is handled by the operation
                     ok;
 
-                true ->
+                true -> % FIXME dead code ?
                     Answer = make_answer(SeqId, [
                         {<<"result">>, <<"ok">>}
                     ]),
@@ -2635,25 +2635,10 @@ handle_contact(Operation, SeqId, Args, State) ->
                 %%     Answer = make_answer(SeqId, 201, []),
                 %%     send_element(State, (Answer));
 
-                %% {ok, true} ->
-                %%     Answer = make_answer(SeqId, 200, [
-                %%         {<<"result">>, <<"true">>}
-                %%     ]),
-                %%     send_element(State, (Answer));
-
-                %% {ok, false} ->
-                %%     Answer = make_answer(SeqId, 200, [
-                %%         {<<"result">>, <<"false">>}
-                %%     ]),
-                %%     send_element(State, (Answer));
-
                 {ok, Result} ->
                     ?DEBUG(?MODULE_STRING " handle_contact returns: ~p", [Result]),
                     Answer = make_result(SeqId, Result),
-                    % Answer = make_answer(SeqId, 200, [
-                    %     {<<"result">>, Result}
-                    % ]),
-                    send_element(State, (Answer))
+                    send_element(State, Answer)
 
                 % Result ->
                 %     ?DEBUG(?MODULE_STRING " handle_contact returns: ~p", [Result]),
@@ -4026,8 +4011,9 @@ data_specific(#state{db=Db, sid=_Sid, user=Username, server=_Server}, Module, Fu
         [] ->
             [];
 
-        [true] ->
-            {ok, true};
+        % sucess or failure
+        [Bool] when Bool =:= true; Bool =:= false ->
+            {ok, Bool};
 
         {ok, ["0"]} -> % success
             <<"ok">>;
@@ -4639,7 +4625,7 @@ ok( Do, Success ) ->
 handle(<<"subscriptions">> = Type, Operation, SeqId, Args, State) ->
     case subscription_operations(Operation) of
         false ->
-            ?DEBUG(?MODULE_STRING ".~p handle_~p Page (default): Operation: ~p, Args: ~p", [ ?LINE, Type, Operation, Args ]),
+            ?DEBUG(?MODULE_STRING ".~p handle_~p (default): Operation: ~p, Args: ~p", [ ?LINE, Type, Operation, Args ]),
             Answer = make_error(SeqId, 404, <<"unknown call ">>),
             send_element(State, Answer);
 
@@ -4652,7 +4638,7 @@ handle(<<"subscriptions">> = Type, Operation, SeqId, Args, State) ->
 handle(<<"pages">> = Type, Operation, SeqId, Args, State) ->
     case page_operations(Operation) of
         false ->
-            ?DEBUG(?MODULE_STRING ".~p handle_~p Page (default): Operation: ~p, Args: ~p", [ ?LINE, Type, Operation, Args ]),
+            ?DEBUG(?MODULE_STRING ".~p handle_~p (default): Operation: ~p, Args: ~p", [ ?LINE, Type, Operation, Args ]),
             Answer = make_error(SeqId, 404, <<"unknown call ">>),
             send_element(State, Answer);
 
@@ -4665,7 +4651,7 @@ handle(<<"pages">> = Type, Operation, SeqId, Args, State) ->
 handle(<<"comgroups">> = Type, Operation, SeqId, Args, State) ->
     case comgroup_operations(Operation) of
         false ->
-            ?DEBUG(?MODULE_STRING ".~p handle_~p Page (default): Operation: ~p, Args: ~p", [ ?LINE, Type, Operation, Args ]),
+            ?DEBUG(?MODULE_STRING ".~p handle_~p (default): Operation: ~p, Args: ~p", [ ?LINE, Type, Operation, Args ]),
             Answer = make_error(SeqId, 404, <<"unknown call ">>),
             send_element(State, Answer);
 

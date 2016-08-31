@@ -1,6 +1,6 @@
 -module(db_results).
 % Created db_results.erl the 12:24:07 (27/05/2014) on core
-% Last Modification of db_results.erl at 21:47:28 (30/08/2016) on core
+% Last Modification of db_results.erl at 23:16:44 (30/08/2016) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -17,8 +17,11 @@
     unpack/1
 ]).
 
-unpack(true) ->
-    {ok, true};
+% handling success or failures from the store
+unpack(Bool) when
+    Bool =:= true;
+    Bool =:= false ->
+    {ok, Bool};
 
 unpack(Data) ->
     %%?DEBUG(" -- Unpack --( ~p bytes )\n~p\n", [ iolist_size(Data), Data ]),
@@ -54,6 +57,7 @@ unpack(<<Count:16,9,Rest/binary>>, undefined, Result) ->
     ?DEBUG("Packed internal list-of-key-value: ~p", [ Count ]),
     unpack(9, Rest, Count, Result);
 
+% fallback to return small _anything_ data from the store
 unpack( Data, _, _) when byte_size(Data) < 128 ->
     {ok, Data};
 

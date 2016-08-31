@@ -1,6 +1,6 @@
 -module(hyd).
 % Created hyd.erl the 02:16:47 (06/02/2014) on core
-% Last Modification of hyd.erl at 20:47:41 (30/08/2016) on core
+% Last Modification of hyd.erl at 23:10:19 (30/08/2016) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -85,8 +85,14 @@ call([ Op | Ops ], Result) ->
         {ok, <<>>} -> % when empty result
             call(Ops, Result);
 
-        {ok, <<"0">>} -> % when nothing happens
+        {ok, <<"f">>} ->
+            call(Ops, [false|Result]);
+
+        {ok, <<"t">>} ->
             call(Ops, [true|Result]);
+
+        {ok, <<"0">>} -> % when nothing happens
+            call(Ops, Result);
 
         {ok, Value} ->
             call(Ops, [Value|Result])
