@@ -3727,18 +3727,6 @@ handle_search(Operation, SeqId, Args, State) ->
                     Answer = make_answer(SeqId, 204, []), % HTTP 204 No Content
                     send_element(State, (Answer));
                     
-                {ok, true} ->
-                    Answer = make_answer(SeqId, 200, [
-                        {<<"result">>, <<"true">>}
-                    ]),
-                    send_element(State, (Answer));
-
-                {ok, false} ->
-                    Answer = make_answer(SeqId, 200, [
-                        {<<"result">>, <<"false">>}
-                    ]),
-                    send_element(State, (Answer));
-                    
                 {ok, Result} ->
                     Answer = make_answer(SeqId, 200, [
                         {<<"result">>, Result}
@@ -4423,8 +4411,7 @@ send_notification(#state{user=_Username, sid=_Sid, userid=Userid} = State, Extra
     ?DEBUG(?MODULE_STRING " [~s (~p|~p)] send_notification: args ~p", [ _Username, seqid(), _Sid, Args ]),
 
     % NOTIFICATIONS
-    %rpc:cast(Db, hyd_fqids, action, [<<"notification">>, <<"create">>, Args]),
-    hyd_fqids:action(<<"notification">>, <<"create">>, Args),
+    hyd_fqids:action(<<"notification">>, <<"create">>, Args), % synchronous
 
     case get_user_pids(Destination, State#state.server) of
         [] ->

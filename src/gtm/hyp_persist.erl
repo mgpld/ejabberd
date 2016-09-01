@@ -1,6 +1,6 @@
 -module(hyp_persist).
 % Created hyp_persist.erl the 12:35:09 (04/11/2015) on core
-% Last Modification of hyp_persist.erl at 14:41:03 (15/02/2016) on sd-19230
+% Last Modification of hyp_persist.erl at 01:24:29 (01/09/2016) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -304,7 +304,9 @@ prepare(Type, #state{ roomref=Fqid, creator=Userid, users=Users } = State) when
             {stop, Error}
     end;
 
-prepare(<<"timeline">>, #state{ roomref=_Fqid, creator=Userid, users=Users } = State)  ->
+% Search for user contacts, retrieve contact's timeline 
+prepare(Type, #state{ roomref=_Fqid, creator=Userid, users=Users } = State) when
+    Type =:= <<"timeline">> ->
     case hyd_users:contacts(Userid) of
         [] ->
             {stop, normal};

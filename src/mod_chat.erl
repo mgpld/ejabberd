@@ -85,14 +85,14 @@
         {us_host = {{<<"">>, <<"">>}, <<"">>} :: {{binary(), binary()}, binary()} | '$1',
          nick = <<"">> :: binary()}).
 
--record(state,
-	{host = <<"">> :: binary(),
-         server_host = <<"">> :: binary(),
-         access = {none, none, none, none} :: {atom(), atom(), atom(), atom()},
-         history_size = 20 :: non_neg_integer(),
-         default_room_opts = [] :: list(),
-         timeout = 5000 :: integer(),
-         room_shaper = none :: shaper:shaper()}).
+-record(state, {
+    host = <<"">> :: binary(),
+    server_host = <<"">> :: binary(),
+    access = {none, none, none, none} :: {atom(), atom(), atom(), atom()},
+    history_size = 20 :: non_neg_integer(),
+    default_room_opts = [] :: list(),
+    timeout = 5000 :: integer(),
+    room_shaper = none :: shaper:shaper()}).
 
 % h(armony)_multi_user_conference
 -define(PROCNAME, h_muc).

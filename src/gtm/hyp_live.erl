@@ -1,6 +1,6 @@
 -module(hyp_live).
 % Created hyp_live.erl the 13:33:37 (01/01/2015) on core
-% Last Modification of hyp_live.erl at 14:39:02 (15/02/2016) on sd-19230
+% Last Modification of hyp_live.erl at 21:06:56 (01/09/2016) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -75,7 +75,8 @@
     timeout, % timeout between questions
     question = #question{},
     users,
-    inactivity_timeout
+    inactivity_timeout,
+    last %last message timestamp
 }).
 
 
@@ -144,16 +145,18 @@ stop(Pid) ->
 	
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 init([ Id, Host, Creator, Ref, Module]) ->
+    Now = os:timestamp(),
     State = #state{
         roomid=Id,
             host=Host,
             roomref=Ref,
             creator=Creator,
-            cid=newcid(),
+            cid=newcid(Now),
             timeout=10000,
             mod=Module,
             users = gb_trees:empty(),
-            inactivity_timeout = ?INACTIVITY_TIMEOUT 
+            inactivity_timeout = ?INACTIVITY_TIMEOUT,
+            last=Now
     },
     prepare(undefined, State).
 
@@ -213,7 +216,8 @@ normal({del, Jid}, #state{ users=Users } = State) ->
 
 normal({message, Message}, #state{ cid=Id } = State) ->
     ?DEBUG(?MODULE_STRING " normal: got message: ~p", [ Message ]),
-    NewState = State#state{ cid = Id + 1 },
+    Now = os:timestamp(),
+    NewState = State#state{ cid = Id + 1, last = Now },
     send_message(Message, NewState),
     fsm_next_state(normal, NewState);
 
@@ -274,11 +278,23 @@ test() ->
 %% FIXME Message should be split to only content and ignore signaling info;
 %% from, to, type
 %% Purpose Id must be incorporated in the final packet sent to users
-send_message(Message, #state{ roomref=Ref, users=Users, cid=Id } = State) ->
+send_message(Message, #state{ roomref=Ref, users=Users, cid=Id, last=Last } = State) ->
     From = iolist_to_binary([<<"chat@harmony/">>, Ref]),
     Msgid = iolist_to_binary([Ref, $. , integer_to_list(Id)]),
     Iter = gb_trees:iterator(Users),
-    publish(gb_trees:next(Iter), Msgid, From, Message, State).
+    publish(gb_trees:next(Iter), Msgid, From, Message, State),
+
+    % FIXME if the room is not running, how to retrieve the last timestamp ?
+    % Maybe a notification must only be sent the moment this process is recreated...
+    Now = os:timestamp(), % if more than 50 seconds old, notify users
+    case (timer:now_diff(Last,Now) div 1000) > 50000 of
+        true ->
+            Iter = gb_trees:iterator(Users),
+            notify(gb_trees:next(Iter), Msgid, From, Message, State);
+
+        false ->
+            ok
+    end.
 
 % send_message(Message, #state{ roomref=Ref, host=Host, mod=Module, users=Users, cid=Id } = _State) ->
 %     Jids = gb_trees:keys(Users),
@@ -294,8 +310,8 @@ send_message(Message, #state{ roomref=Ref, users=Users, cid=Id } = State) ->
 fsm_next_state(StateName, #state{ inactivity_timeout = Timeout } = State) ->
     {next_state, StateName, State, Timeout}.
 
-newcid() ->
-    Now = os:timestamp(),
+newcid(Now) ->
+    %Now = os:timestamp(),
     Cid = lists:concat(tuple_to_list(Now)),
     list_to_integer(Cid).
 
@@ -347,6 +363,7 @@ prepare(Type, #state{ roomref=Fqid, creator=Userid, users=Users } = State) when
             {stop, Error}
     end;
 
+% inform the parent (owner) of this drop that a new element has been added
 prepare(Type, #state{ roomref=Fqid,  creator=_Userid } = State) when 
     Type =:= <<"drop">> ->
 
@@ -378,4 +395,12 @@ publish({User, _, Iter}, Msgid, From, Message, #state{ host=Host, mod=Module } =
     Module:route(From, To, Packet ),
     publish(gb_trees:next(Iter), Msgid, From, Message, State).
 
+% create notification if needed (compute elapsed time to prevent spamming)
+notify(none, _, _, _, _) ->
+    ok;
+notify({User, _, Iter}, Msgid, From, Message, #state{ host=Host, mod=Module} = State) ->
+    To = iolist_to_binary([User,<<"@">>,Host]),
+    Packet = {chat, {Msgid, Message}},
+    ?DEBUG(?MODULE_STRING "[~5w] notify: Module: ~p from: ~p to: ~p", [ ?LINE, Module, From, To ]), 
+    notify(gb_trees:next(Iter), Msgid, From, Message, State).
 
