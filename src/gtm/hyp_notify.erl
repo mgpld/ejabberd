@@ -1,6 +1,6 @@
--module(hyp_live).
-% Created hyp_live.erl the 13:33:37 (01/01/2015) on core
-% Last Modification of hyp_live.erl at 09:48:06 (03/09/2016) on core
+-module(hyp_notify).
+% Created hyp_notify.erl the 08:34:29 (03/09/2016) on core
+% Last Modification of hyp_notify.erl at 10:37:16 (03/09/2016) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -10,7 +10,7 @@
 -include("logger.hrl").
 
 -export([
-    start/1,
+    start/1,start/3,
     start_link/0, start_link/1, start_link/3, start_link/5,
     handle_event/3,
     handle_sync_event/4, handle_info/3,
@@ -37,26 +37,22 @@
 ]).
 
 
--define(test, true).
+%-define(test, true).
 
 -ifdef(test).
 -export([
-    debug_link/1,
-    test/0
+    debug_link/1
 ]).
 -endif.
 
 % fsm states
 -export([
-    enroll/2, enroll/3,
     normal/2, normal/3,
-    init/2, init/3,
     locked/2, locked/3
 ]).
 
-% -define( UINT16(X),	X:16/native-unsigned).
-%-define( INACTIVITY_TIMEOUT, 5 * 60000). % 5 minutes
--define( INACTIVITY_TIMEOUT, 60 * 1000). % 10 seconds
+-define( INACTIVITY_TIMEOUT, 10 * 1000). % 10 seconds
+-define( DELAY_TIMEOUT, 1 * 1000). % 1 second
 
 -record(question, {
     id,
@@ -66,7 +62,7 @@
 }).
 
 -record(state,{
-    roomid,
+    type,
     host,
     roomref,
     creator,
@@ -76,31 +72,27 @@
     timeout, % timeout between questions
     question = #question{},
     users,
-    inactivity_timeout,
-    last %last message timestamp
+    inactivity_timeout
 }).
 
 
-debug_link( Id ) ->
-    Options = [
-        {debug, [{log_to_file, ?MODULE_STRING ++ ".log"}]
-    }],
-    gen_fsm:start_link(?MODULE, [Id], Options).
+start_link(Type, Module, RoomRef ) ->
+    gen_fsm:start_link(?MODULE, [Type, Module, RoomRef], []).
 
-start_link( RoomId, Module, RoomRef ) ->
-    gen_fsm:start_link(?MODULE, [RoomId, Module, RoomRef], []).
+start_link(Type, Host, Creator, RoomRef, Module ) ->
+    gen_fsm:start_link(?MODULE, [Type, Host, Creator, RoomRef, Module], []).
 
-start_link( RoomId, Host, Creator, RoomRef, Module ) ->
-    gen_fsm:start_link(?MODULE, [RoomId, Host, Creator, RoomRef, Module], []).
+start_link(Type) ->
+    gen_fsm:start_link(?MODULE, [Type], []).
 
-start_link( Id ) ->
-    gen_fsm:start_link(?MODULE, [Id], []).
+start(Type) ->
+    gen_fsm:start(?MODULE, [Type], []).
 
-start( Id ) ->
-    gen_fsm:start(?MODULE, [Id], []).
+start(Type, Module, RoomRef ) ->
+    gen_fsm:start(?MODULE, [Type, Module, RoomRef], []).
 
 start_link() ->
-    gen_fsm:start_link({local, ?MODULE}, ?MODULE, [], []).
+    gen_fsm:start_link(?MODULE, ?MODULE, [], []).
 
 cancel() ->
     gen_fsm:send_all_state_event(?MODULE, cancel).
@@ -145,30 +137,26 @@ stop(Pid) ->
 	gen_fsm:send_all_state_event(Pid, stop).
 	
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-init([ Id, Host, Creator, Ref, Module]) ->
-    Now = os:timestamp(),
+init([ Type, Host, Creator, Ref, Module]) ->
     State = #state{
-        roomid=Id,
+        type=Type,
         host=Host,
         roomref=Ref,
         creator=Creator,
-        cid=newcid(Now),
+        cid=newcid(),
         timeout=10000,
         mod=Module,
         users = gb_trees:empty(),
-        inactivity_timeout = ?INACTIVITY_TIMEOUT,
-        last=Now
+        inactivity_timeout = ?INACTIVITY_TIMEOUT 
     },
     prepare(undefined, State).
-
-
 
 handle_info(_Info, StateName, State) ->
     fsm_next_state(StateName, State).
   
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 handle_event(cancel, _StateName, _State) ->
-    {next_state, enroll, _State, ?INACTIVITY_TIMEOUT};
+    {next_state, normal, _State, ?INACTIVITY_TIMEOUT};
 
 handle_event(stop, _StateName, State) ->
     {stop, normal, State};
@@ -186,50 +174,6 @@ terminate(_Reason, _StateName, _State) ->
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State, ?INACTIVITY_TIMEOUT}.
 
-%% STATE enroll
-%% enroll/2
-enroll(timeout, State) ->
-    %error_msg(?MODULE_STRING " timeout in state 'enroll' roomref: ~p\n", [State#state.roomref]),
-    {stop, normal, State};
-
-enroll(normal, State) ->
-    fsm_next_state(normal, State);
-
-enroll(_Msg, State) ->
-    ?ERROR_MSG("enroll/2: unknown message: ~p\n", [ _Msg ]),
-    {next_state, enroll, State, ?INACTIVITY_TIMEOUT}.
-
-%% enroll/3
-enroll(_Msg, _, State) ->
-    ?ERROR_MSG("enroll/3: unknown message: ~p\n", [ _Msg ]),
-    {reply, undefined, enroll, State}.
-
-%% init/2
-init(timeout, #state{
-    roomid=RoomId, 
-    host=ServerHost, 
-    creator=Creator,
-    roomref=RoomRef,
-    mod=Module
-    } = State) ->
-    case hyp_notify:start(RoomId, ServerHost, Creator, RoomRef, Module) of
-        {ok, _Pid} ->
-            ?DEBUG(?MODULE_STRING "[~5w] HYP_LIVE: Notify process ok pid ~p roomref: ~p mod: ~p", [ ?LINE, _Pid, RoomRef, Module]),
-            fsm_next_state(normal, State);
-
-        {error, Reason} ->
-            ?ERROR_MSG(?MODULE_STRING "[~5w] HYP_LIVE: Notify FAIL create new room for type ~p (~p) mod: ~p", [ ?LINE, RoomRef, RoomId, Module]),
-            {stop, normal, State}
-    end;
-
-init(_, State) ->
-    fsm_next_state(init, State).
-
-%% init/3
-init(_Msg, _, State) ->
-    ?ERROR_MSG(?MODULE_STRING " init/3: unknown message: ~p", [ _Msg ]),
-    {noreply, init, State}.
-
 %%normal/2
 normal({add, Jid}, #state{ users=Users } = State) ->
 	?DEBUG(?MODULE_STRING " normal: adding user ~p\n", [ Jid ]), 
@@ -242,9 +186,8 @@ normal({del, Jid}, #state{ users=Users } = State) ->
     fsm_next_state(normal, State#state{ users=NewUsers });
 
 normal({message, Message}, #state{ cid=Id } = State) ->
-    ?DEBUG(?MODULE_STRING " normal: got message: ~p", [ Message ]),
-    Now = os:timestamp(),
-    NewState = State#state{ cid = Id + 1, last = Now },
+    %?DEBUG(?MODULE_STRING " normal: got message: ~p", [ Message ]),
+    NewState = State#state{ cid = Id + 1 },
     send_message(Message, NewState),
     fsm_next_state(normal, NewState);
 
@@ -257,7 +200,8 @@ normal({message, Message, Opts}, #state{ cid=Id } = State) ->
     fsm_next_state(normal, NewState);
 
 normal(timeout, State) ->
-    ?DEBUG(?MODULE_STRING " normal: timeout, stopping\n", []),
+    send_message(<<"test notify">>, State),
+    ?DEBUG(?MODULE_STRING " normal: work completed, stopping\n", []),
     {stop, normal, State};
     
 normal(_Msg, State) ->
@@ -268,12 +212,10 @@ locked(_Msg, State) ->
     ?ERROR_MSG(?MODULE_STRING " locked/2: unknown message: ~p\n", [ _Msg ]),
     {next_state, locked, State, ?INACTIVITY_TIMEOUT}.
 
-%% normal/3
 normal(_Msg, _, State) ->
     ?ERROR_MSG(?MODULE_STRING " normal/3: unknown message: ~p\n", [ _Msg ]),
     {reply, undefined, normal, State}.
 
-%% locked/3
 locked(_Msg, _, State) ->
     ?ERROR_MSG(?MODULE_STRING " locked/3: unknown message: ~p\n", [ _Msg ]),
     {reply, undefined, locked, State}.
@@ -281,66 +223,22 @@ locked(_Msg, _, State) ->
 route(From, To, Message) ->
     io:format(?MODULE_STRING " Route: From ~p, To ~p, Message: ~p\n", [ From, To, Message ]).
 
-
--ifdef(test).
-test() ->
-	{ok, A} = start_link(1, ?MODULE, <<"Chatroom">>),
-	J1 = <<"antoine@messaging.harmony">>,
-	J2 = <<"thomas@messaging.harmony">>,
-	%J1Hash = erlang:phash2( J1 ),
-	%J2Hash = erlang:phash2( J2 ),
-	normal(A),
-	add(A, J1),
-	add(A, J2),
-	message(A, {message, <<"AWAKE ?">>}),
-	receive after 1000 -> ok end,
-	message(A, {message, <<"YES MASTER">>}),
-	receive after 1000 -> ok end,
-	Options = [{expire, 2000}],
-	message(A, {message, <<"YES MASTER :(">>}, Options),
-	io:format("Info: ~p\n", [ info(A) ]),
-	%io:format("Score: ~p\n", [ score(A) ]),
-	receive after 10000 -> ok end,
-	stop(A).
--endif.
-
 %% FIXME Message should be split to only content and ignore signaling info;
 %% from, to, type
 %% Purpose Id must be incorporated in the final packet sent to users
-send_message(Message, #state{ roomref=Ref, users=Users, cid=Id, last=Last } = State) ->
-    From = iolist_to_binary([<<"chat@harmony/">>, Ref]),
+send_message(Message, #state{ roomref=Ref, users=Users, cid=Id } = State) ->
+    Child = <<"REMOVE ME">>,
+    From = iolist_to_binary([<<"event@harmony/">>, Ref]),
     Msgid = iolist_to_binary([Ref, $. , integer_to_list(Id)]),
     Iter = gb_trees:iterator(Users),
-    publish(gb_trees:next(Iter), Msgid, From, Message, State).
+    Tree = gb_trees:next(Iter),
+    publish(Tree, Child, Msgid, From, Message, State).
 
-    % % FIXME if the room is not running, how to retrieve the last timestamp ?
-    % % Maybe a notification must only be sent the moment this process is recreated...
-    % Now = os:timestamp(), % if more than 50 seconds old, notify users
-    % case (timer:now_diff(Last,Now) div 1000) > 50000 of
-    %     true ->
-    %         Iter = gb_trees:iterator(Users),
-    %         notify(gb_trees:next(Iter), Msgid, From, Message, State);
-
-    %     false ->
-    %         ok
-    % end.
-
-% send_message(Message, #state{ roomref=Ref, host=Host, mod=Module, users=Users, cid=Id } = _State) ->
-%     Jids = gb_trees:keys(Users),
-%     lists:foreach( fun( User ) ->
-%         To = iolist_to_binary([User,<<"@">>,Host]),
-%         From = iolist_to_binary([<<"chat@harmony/">>, Ref]),
-%         Msgid = iolist_to_binary([Ref, $. , integer_to_list(Id)]),
-%         Packet = {chat, {Msgid, Message}},
-%         ?DEBUG(?MODULE_STRING " send_message: Module: ~p from: ~p to: ~p\n~p\n", [ Module, From, To, Packet ]), 
-%         Module:route(From, To, Packet )
-%     end, Jids).
-% 
 fsm_next_state(StateName, #state{ inactivity_timeout = Timeout } = State) ->
     {next_state, StateName, State, Timeout}.
 
-newcid(Now) ->
-    %Now = os:timestamp(),
+newcid() ->
+    Now = os:timestamp(),
     Cid = lists:concat(tuple_to_list(Now)),
     list_to_integer(Cid).
 
@@ -358,7 +256,7 @@ options(State, Message, [ _| Options]) ->
     options(State, Message, Options).
 
 %% prepare/2
-prepare(undefined, #state{ roomref=Fqid, creator=_Userid } = State) ->
+prepare(undefined, #state{ roomref=Fqid, creator=_Userid, users=_Users } = State) ->
     case hyp_data:execute(hyd_fqids, read, [Fqid]) of
         {ok, Props} ->
             case hyp_data:extract([<<"api">>,<<"type">>], Props) of 
@@ -373,26 +271,57 @@ prepare(undefined, #state{ roomref=Fqid, creator=_Userid } = State) ->
     end;
 
 prepare(Type, #state{ roomref=Fqid, creator=Userid, users=Users } = State) when 
+    Type =:= <<"comgroup">>;
+    Type =:= <<"thread">>;
     Type =:= <<"group">>;
-    Type =:= <<"thread">> ->
+    Type =:= <<"page">> ->
 
     case hyp_data:action(Userid, Fqid, <<"members">>, []) of
 
-        {ok, {_Infos, Subscriber}} when is_binary(Subscriber) ->
-            NewUsers = gb_trees:enter(Subscriber, undefined, Users),
-            {ok, init, State#state{ users=NewUsers }, 0};
-
         {ok, {_Infos, Subscribers}} when is_list(Subscribers) ->
             NewUsers = lists:foldl( fun( Id, Tree ) ->
-                gb_trees:enter(Id, undefined, Tree)
+                gb_trees:enter(Id, Type, Tree)
+                %case db:call(<<"%getNotificationGroup">>,<<"users">>, [Id]) of
+                %    {ok, Notifygroup} ->
+                %        ?DEBUG(?MODULE_STRING "[~5w] getNotificationGroup: Id: ~p Newsfeed: ~p", [ ?LINE, Id, Notifygroup ]), 
+                %        gb_trees:enter(Id, Notifygroup, Tree);
+                %    _ ->
+                %        ok
+                %end
             end, Users, Subscribers),
-            {ok, init, State#state{ users=NewUsers }, 0};
+            {ok, normal, State#state{ users=NewUsers }, ?DELAY_TIMEOUT};
+        
+        {ok, _} ->
+            {stop, normal};
     
         {error, Error} ->
             {stop, Error}
     end;
 
-% inform the parent (owner) of this drop that a new element has been added
+% Search for user contacts, retrieve contact's timeline 
+prepare(Type, #state{ roomref=_Fqid, creator=Userid, users=Users } = State) when
+    Type =:= <<"timeline">> ->
+    case hyd_users:contacts(Userid) of
+        [] ->
+            {stop, normal};
+
+        {error, Error} ->
+            {stop, Error};
+        
+        Contacts ->
+            NewUsers = lists:foldl( fun( Id, Tree ) ->
+                case db:call(<<"%getNotificationGroup">>,<<"users">>, [Id]) of
+                    {ok, Newsfeed} ->
+                        ?DEBUG(?MODULE_STRING "[~5w] getNotificationGroup: Id: ~p Newsfeed: ~p", [ ?LINE, Id, Newsfeed ]), 
+                        gb_trees:enter(Id, Newsfeed, Tree);
+                    _ ->
+                        ok
+                end
+            end, Users, Contacts),
+            {ok, normal, State#state{ users=NewUsers }, ?DELAY_TIMEOUT}
+
+    end;
+
 prepare(Type, #state{ roomref=Fqid,  creator=_Userid } = State) when 
     Type =:= <<"drop">> ->
 
@@ -408,28 +337,32 @@ prepare(Type, #state{ roomref=Fqid,  creator=_Userid } = State) when
 
         {error, Error} ->
             {stop, Error}
-    end;
+    end.
 
-prepare(Type, _State) ->
-    ?DEBUG( ?MODULE_STRING "[~5w] Unhandled live process for type: ~p", [ ?LINE, Type ]),
-    {stop, einval}.
+% send_message(Message, #state{ roomref=Ref, host=Host, mod=Module, users=Users, cid=Id } = _State) ->
 
-% send realtime message about this new message
-publish(none, _, _, _, _) ->
+% 1) store message in user newsfeed 
+% 2) send realtime message about this new message
+publish(none, _, _, _, _, _) ->
     ok;
-publish({User, _, Iter}, Msgid, From, Message, #state{ host=Host, mod=Module } = State) ->
+publish({User, Type, Iter}, Child, Msgid, From, Message, #state{ host=Host, mod=Module } = State) ->
     To = iolist_to_binary([User,<<"@">>,Host]),
-    Packet = {chat, {Msgid, Message}},
-    ?DEBUG(?MODULE_STRING "[~5w] send_message: Module: ~p from: ~p to: ~p", [ ?LINE, Module, From, To ]), 
-    Module:route(From, To, Packet ),
-    publish(gb_trees:next(Iter), Msgid, From, Message, State).
+    Packet = {notification, {Msgid, Message}},
+    Class = <<"com.harmony.", Type/binary>>,
+    Token = <<"Token">>,
+    Title = <<"Title">>,
+    Content = <<"Content">>,
+    Args = [ From, Class, From, User, Token, Title, Content ],
+    ?DEBUG(?MODULE_STRING " [~5w] send_notification: args ~p", [ ?LINE, Args ]),
+    % NOTIFICATIONS
+    hyd_fqids:action(<<"notification">>, <<"create">>, Args), % synchronous
+    %addchild(Notifygroup, User, Child),
+    ?DEBUG(?MODULE_STRING " [~5w] send_message: Module: ~p from: ~p to: ~p", [ ?LINE, Module, From, To ]), 
+    Module:route(From, To, Packet ), % realtime notification
+    publish(gb_trees:next(Iter), Child, Msgid, From, Message, State).
 
-% create notification if needed (compute elapsed time to prevent spamming)
-notify(none, _, _, _, _) ->
+addchild(<<"0">>, _User, _Child) ->
     ok;
-notify({User, _, Iter}, Msgid, From, Message, #state{ host=Host, mod=Module} = State) ->
-    To = iolist_to_binary([User,<<"@">>,Host]),
-    Packet = {chat, {Msgid, Message}},
-    ?DEBUG(?MODULE_STRING "[~5w] notify: Module: ~p from: ~p to: ~p", [ ?LINE, Module, From, To ]), 
-    notify(gb_trees:next(Iter), Msgid, From, Message, State).
+addchild(Notifygroup, User, Child) ->
+    hyd_fqids:action(Notifygroup, <<"addChild">>, [ User, Child ]).
 
