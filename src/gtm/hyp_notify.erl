@@ -1,6 +1,6 @@
 -module(hyp_notify).
 % Created hyp_notify.erl the 08:34:29 (03/09/2016) on core
-% Last Modification of hyp_notify.erl at 14:13:45 (03/09/2016) on core
+% Last Modification of hyp_notify.erl at 14:31:55 (03/09/2016) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -186,7 +186,7 @@ normal({del, Jid}, #state{ users=Users } = State) ->
     fsm_next_state(normal, State#state{ users=NewUsers });
 
 normal({message, Message}, #state{ cid=Id } = State) ->
-    %?DEBUG(?MODULE_STRING " normal: got message: ~p", [ Message ]),
+    ?DEBUG(?MODULE_STRING "[~5w] normal: got message: ~p", [ ?LINE, Message ]),
     NewState = State#state{ cid = Id + 1 },
     send_message(Message, NewState),
     fsm_next_state(normal, NewState);
@@ -200,7 +200,7 @@ normal({message, Message, Opts}, #state{ cid=Id } = State) ->
     fsm_next_state(normal, NewState);
 
 normal(timeout, State) ->
-    send_message(<<"test notify">>, State),
+    %send_message(<<"test notify">>, State),
     ?DEBUG(?MODULE_STRING " normal: work completed, stopping\n", []),
     {stop, normal, State};
     
@@ -289,7 +289,7 @@ prepare(Type, #state{ roomref=Fqid, creator=Userid, users=Users } = State) when
                 %        ok
                 %end
             end, Users, Subscribers),
-            {ok, normal, State#state{ users=NewUsers }, ?DELAY_TIMEOUT};
+            {ok, normal, State#state{ users=NewUsers }, ?INACTIVITY_TIMEOUT};
         
         {ok, _} ->
             {stop, normal};
@@ -299,6 +299,7 @@ prepare(Type, #state{ roomref=Fqid, creator=Userid, users=Users } = State) when
     end;
 
 % Search for user contacts, retrieve contact's timeline 
+% Notify every contacts that the user has updated his timeline ?
 prepare(Type, #state{ roomref=_Fqid, creator=Userid, users=Users } = State) when
     Type =:= <<"timeline">> ->
     case hyd_users:contacts(Userid) of

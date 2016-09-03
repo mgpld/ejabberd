@@ -1,6 +1,6 @@
 -module(hyp_live).
 % Created hyp_live.erl the 13:33:37 (01/01/2015) on core
-% Last Modification of hyp_live.erl at 09:48:06 (03/09/2016) on core
+% Last Modification of hyp_live.erl at 14:36:05 (03/09/2016) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -70,14 +70,14 @@
     host,
     roomref,
     creator,
-    data,
+    last,
     cid,
     mod, % module must implement route/4
     timeout, % timeout between questions
     question = #question{},
     users,
     inactivity_timeout,
-    last %last message timestamp
+    notify % notification process
 }).
 
 
@@ -151,13 +151,14 @@ init([ Id, Host, Creator, Ref, Module]) ->
         roomid=Id,
         host=Host,
         roomref=Ref,
+        last=Now,
         creator=Creator,
         cid=newcid(Now),
         timeout=10000,
         mod=Module,
         users = gb_trees:empty(),
         inactivity_timeout = ?INACTIVITY_TIMEOUT,
-        last=Now
+        notify=undefined
     },
     prepare(undefined, State).
 
@@ -212,10 +213,10 @@ init(timeout, #state{
     roomref=RoomRef,
     mod=Module
     } = State) ->
-    case hyp_notify:start(RoomId, ServerHost, Creator, RoomRef, Module) of
-        {ok, _Pid} ->
-            ?DEBUG(?MODULE_STRING "[~5w] HYP_LIVE: Notify process ok pid ~p roomref: ~p mod: ~p", [ ?LINE, _Pid, RoomRef, Module]),
-            fsm_next_state(normal, State);
+    case hyp_notify:start_link(RoomId, ServerHost, Creator, RoomRef, Module) of
+        {ok, Pid} ->
+            ?DEBUG(?MODULE_STRING "[~5w] HYP_LIVE: Notify process ok pid ~p roomref: ~p mod: ~p", [ ?LINE, Pid, RoomRef, Module]),
+            fsm_next_state(normal, State#state{ notify=Pid });
 
         {error, Reason} ->
             ?ERROR_MSG(?MODULE_STRING "[~5w] HYP_LIVE: Notify FAIL create new room for type ~p (~p) mod: ~p", [ ?LINE, RoomRef, RoomId, Module]),
@@ -240,6 +241,14 @@ normal({del, Jid}, #state{ users=Users } = State) ->
 	?DEBUG(?MODULE_STRING " normal: deleting user ~p\n", [ Jid ]), 
     NewUsers = gb_trees:delete(Jid, Users),
     fsm_next_state(normal, State#state{ users=NewUsers });
+
+% Only execute notification for the first message
+normal({message, Message}, #state{ cid=Id, notify=Notify } = State) when is_pid(Notify) ->
+    ?DEBUG(?MODULE_STRING " normal: got message: ~p", [ Message ]),
+    Now = os:timestamp(),
+    NewState = State#state{ cid = Id + 1, last = Now, notify = undefined },
+    send_message(Message, NewState),
+    fsm_next_state(normal, NewState);
 
 normal({message, Message}, #state{ cid=Id } = State) ->
     ?DEBUG(?MODULE_STRING " normal: got message: ~p", [ Message ]),
@@ -307,11 +316,17 @@ test() ->
 %% FIXME Message should be split to only content and ignore signaling info;
 %% from, to, type
 %% Purpose Id must be incorporated in the final packet sent to users
-send_message(Message, #state{ roomref=Ref, users=Users, cid=Id, last=Last } = State) ->
+send_message(Message, #state{ roomref=Ref, users=Users, cid=Id, last=Last, notify=Notify } = State) ->
     From = iolist_to_binary([<<"chat@harmony/">>, Ref]),
     Msgid = iolist_to_binary([Ref, $. , integer_to_list(Id)]),
     Iter = gb_trees:iterator(Users),
-    publish(gb_trees:next(Iter), Msgid, From, Message, State).
+    publish(gb_trees:next(Iter), Msgid, From, Message, State),
+    notify(Message, State).
+
+notify(Message, #state{ notify=Notify }) when is_pid(Notify) ->
+    hyp_notify:message(Notify, Message);
+notify(Message, #state{ notify=_ }) ->
+    ok.
 
     % % FIXME if the room is not running, how to retrieve the last timestamp ?
     % % Maybe a notification must only be sent the moment this process is recreated...
