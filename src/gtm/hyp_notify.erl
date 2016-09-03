@@ -1,6 +1,6 @@
 -module(hyp_notify).
 % Created hyp_notify.erl the 08:34:29 (03/09/2016) on core
-% Last Modification of hyp_notify.erl at 10:37:16 (03/09/2016) on core
+% Last Modification of hyp_notify.erl at 14:13:45 (03/09/2016) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -227,7 +227,7 @@ route(From, To, Message) ->
 %% from, to, type
 %% Purpose Id must be incorporated in the final packet sent to users
 send_message(Message, #state{ roomref=Ref, users=Users, cid=Id } = State) ->
-    Child = <<"REMOVE ME">>,
+    Child = Ref,
     From = iolist_to_binary([<<"event@harmony/">>, Ref]),
     Msgid = iolist_to_binary([Ref, $. , integer_to_list(Id)]),
     Iter = gb_trees:iterator(Users),
@@ -348,16 +348,16 @@ publish(none, _, _, _, _, _) ->
 publish({User, Type, Iter}, Child, Msgid, From, Message, #state{ host=Host, mod=Module } = State) ->
     To = iolist_to_binary([User,<<"@">>,Host]),
     Packet = {notification, {Msgid, Message}},
-    Class = <<"com.harmony.", Type/binary>>,
-    Token = <<"Token">>,
-    Title = <<"Title">>,
-    Content = <<"Content">>,
+    Class = iolist_to_binary([<<"com.harmony.">>, application(Type) ]),
+    Token = Child,
+    Title = <<"activity">>,
+    Content = <<>>,
     Args = [ From, Class, From, User, Token, Title, Content ],
-    ?DEBUG(?MODULE_STRING " [~5w] send_notification: args ~p", [ ?LINE, Args ]),
+    ?DEBUG(?MODULE_STRING "[~5w] send_notification: args ~p", [ ?LINE, Args ]),
     % NOTIFICATIONS
     hyd_fqids:action(<<"notification">>, <<"create">>, Args), % synchronous
     %addchild(Notifygroup, User, Child),
-    ?DEBUG(?MODULE_STRING " [~5w] send_message: Module: ~p from: ~p to: ~p", [ ?LINE, Module, From, To ]), 
+    ?DEBUG(?MODULE_STRING "[~5w] send_message: Module: ~p from: ~p to: ~p", [ ?LINE, Module, From, To ]), 
     Module:route(From, To, Packet ), % realtime notification
     publish(gb_trees:next(Iter), Child, Msgid, From, Message, State).
 
@@ -366,3 +366,11 @@ addchild(<<"0">>, _User, _Child) ->
 addchild(Notifygroup, User, Child) ->
     hyd_fqids:action(Notifygroup, <<"addChild">>, [ User, Child ]).
 
+
+application(<<"drop">>) -> <<"Hychat">>;
+application(<<"page">>) -> <<"Community">>;
+application(<<"group">>) -> <<"Hychat">>;
+application(<<"thread">>) -> <<"Hychat">>;
+application(<<"comgroup">>) -> <<"Community">>;
+application(<<"timeline">>) -> <<"Community">>;
+application(_App) ->  _App.

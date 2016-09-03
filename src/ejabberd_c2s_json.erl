@@ -4598,7 +4598,7 @@ action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, E
     mod_chat:route(Host, Element, Creator, message, Packet);
 
 action(#state{user=Username, sid=Sid} = _State, _Element, _Type, _Action, _Args, _Result) ->
-    ?DEBUG(?MODULE_STRING " [~s (~p|~p)] action on type ~p: ~p:~p(~p):\n~p", [ Username, seqid(), Sid, _Type, _Element, _Action, _Args, _Result ]),
+    ?DEBUG(?MODULE_STRING "[~5w] action on type ~p: ~p:~p(~p):\n~p", [ ?LINE, _Type, _Element, _Action, _Args, _Result ]),
     ok.
 
 ok( Do, Success ) ->
@@ -4612,7 +4612,7 @@ ok( Do, Success ) ->
 handle(<<"subscriptions">> = Type, Operation, SeqId, Args, State) ->
     case subscription_operations(Operation) of
         false ->
-            ?DEBUG(?MODULE_STRING ".~p handle_~p (default): Operation: ~p, Args: ~p", [ ?LINE, Type, Operation, Args ]),
+            ?DEBUG(?MODULE_STRING "[~5w] handle_~p (default): Operation: ~p, Args: ~p", [ ?LINE, Type, Operation, Args ]),
             Answer = make_error(SeqId, 404, <<"unknown call ">>),
             send_element(State, Answer);
 

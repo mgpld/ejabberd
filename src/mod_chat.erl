@@ -377,7 +377,7 @@ handle_call({create, Type, From, RoomRef, Opts}, _From,
         false ->
             IdentFun = fun(A) -> A end,
             Module = gen_mod:get_opt(module, Opts, IdentFun, ?MODULE),
-            ?DEBUG(?MODULE_STRING ".~p HYP_PERSIST: create new room from user ~p: '~s' (~p) mod: ~p", [ ?LINE, From, RoomRef, Type, Module]),
+            ?DEBUG(?MODULE_STRING "[~5w] HYP_PERSIST: create new room from user ~p: '~s' (~p) mod: ~p", [ ?LINE, From, RoomRef, Type, Module]),
             case hyp_persist:start_link(Type, ServerHost, From, RoomRef, Module) of
                 {ok, Pid} ->
                     register_room(Host, RoomRef, Pid),
