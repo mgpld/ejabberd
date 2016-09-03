@@ -1,6 +1,6 @@
 -module(hyp_notify).
 % Created hyp_notify.erl the 08:34:29 (03/09/2016) on core
-% Last Modification of hyp_notify.erl at 14:31:55 (03/09/2016) on core
+% Last Modification of hyp_notify.erl at 15:21:37 (03/09/2016) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -227,7 +227,7 @@ route(From, To, Message) ->
 %% from, to, type
 %% Purpose Id must be incorporated in the final packet sent to users
 send_message(Message, #state{ roomref=Ref, users=Users, cid=Id } = State) ->
-    Child = Ref,
+    Child = hyp_data:extract([<<"message">>,<<"child">>], Message),
     From = iolist_to_binary([<<"event@harmony/">>, Ref]),
     Msgid = iolist_to_binary([Ref, $. , integer_to_list(Id)]),
     Iter = gb_trees:iterator(Users),
@@ -349,11 +349,12 @@ publish(none, _, _, _, _, _) ->
 publish({User, Type, Iter}, Child, Msgid, From, Message, #state{ host=Host, mod=Module } = State) ->
     To = iolist_to_binary([User,<<"@">>,Host]),
     Packet = {notification, {Msgid, Message}},
-    Class = iolist_to_binary([<<"com.harmony.">>, application(Type) ]),
-    Token = Child,
+    Token = iolist_to_binary([<<"com.harmony.">>, application(Type) ]),
+    Class = hyp_data:extract([<<"message">>, <<"type">>], Message),
+    Sender = hyp_data:extract([<<"message">>, <<"from">>, <<"id">>], Message),
     Title = <<"activity">>,
     Content = <<>>,
-    Args = [ From, Class, From, User, Token, Title, Content ],
+    Args = [ Sender, Class, Child, User, Token, Title, Content ],
     ?DEBUG(?MODULE_STRING "[~5w] send_notification: args ~p", [ ?LINE, Args ]),
     % NOTIFICATIONS
     hyd_fqids:action(<<"notification">>, <<"create">>, Args), % synchronous
@@ -368,10 +369,10 @@ addchild(Notifygroup, User, Child) ->
     hyd_fqids:action(Notifygroup, <<"addChild">>, [ User, Child ]).
 
 
-application(<<"drop">>) -> <<"Hychat">>;
-application(<<"page">>) -> <<"Community">>;
-application(<<"group">>) -> <<"Hychat">>;
-application(<<"thread">>) -> <<"Hychat">>;
-application(<<"comgroup">>) -> <<"Community">>;
-application(<<"timeline">>) -> <<"Community">>;
+application(<<"drop">>) -> <<"hychat">>;
+application(<<"page">>) -> <<"community">>;
+application(<<"group">>) -> <<"hychat">>;
+application(<<"thread">>) -> <<"hychat">>;
+application(<<"comgroup">>) -> <<"community">>;
+application(<<"timeline">>) -> <<"community">>;
 application(_App) ->  _App.

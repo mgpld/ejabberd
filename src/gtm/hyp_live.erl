@@ -1,6 +1,6 @@
 -module(hyp_live).
 % Created hyp_live.erl the 13:33:37 (01/01/2015) on core
-% Last Modification of hyp_live.erl at 14:36:05 (03/09/2016) on core
+% Last Modification of hyp_live.erl at 14:46:08 (03/09/2016) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -244,14 +244,15 @@ normal({del, Jid}, #state{ users=Users } = State) ->
 
 % Only execute notification for the first message
 normal({message, Message}, #state{ cid=Id, notify=Notify } = State) when is_pid(Notify) ->
-    ?DEBUG(?MODULE_STRING " normal: got message: ~p", [ Message ]),
+    ?DEBUG(?MODULE_STRING "[~5w] normal: got message: ~p", [ ?LINE, Message ]),
     Now = os:timestamp(),
-    NewState = State#state{ cid = Id + 1, last = Now, notify = undefined },
-    send_message(Message, NewState),
-    fsm_next_state(normal, NewState);
+    NewState0 = State#state{ cid = Id + 1, last = Now },
+    send_message(Message, NewState0),
+    NewState1 = NewState0#state{ notify = undefined },
+    fsm_next_state(normal, NewState1);
 
 normal({message, Message}, #state{ cid=Id } = State) ->
-    ?DEBUG(?MODULE_STRING " normal: got message: ~p", [ Message ]),
+    ?DEBUG(?MODULE_STRING "[~5w] normal: got message: ~p", [ ?LINE, Message ]),
     Now = os:timestamp(),
     NewState = State#state{ cid = Id + 1, last = Now },
     send_message(Message, NewState),

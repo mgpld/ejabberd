@@ -4564,7 +4564,7 @@ action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, E
 
     RoomType = 0,
     mod_chat:create_room(Host, RoomType, Creator, Element, []), % this will create synchronously the room if needed
-    Packet = make_packet( _State, <<"delete">>, [
+    Packet = make_packet( _State, <<"del">>, [
         { <<"parent">>, Element},
         { <<"child">>, Child}]),
     mod_chat:route(Host, Element, Creator, message, Packet);
@@ -4576,7 +4576,7 @@ action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, E
 
     RoomType = 0,
     mod_chat:create_room(Host, RoomType, Creator, Element, []), % this will create synchronously the room if needed
-    Packet = make_packet( _State, <<"update">>, [
+    Packet = make_packet( _State, <<"add">>, [
         { <<"parent">>, Element},
         { <<"count">>, Count},
         { <<"child">>, Child}]),
@@ -4591,7 +4591,7 @@ action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, E
 
     RoomType = Type,
     mod_chat:create_room(Host, RoomType, Creator, Element, []), % this will create synchronously the room if needed
-    Packet = make_packet( _State, <<"update">>, [
+    Packet = make_packet( _State, <<"add">>, [
         { <<"parent">>, Element},
         { <<"count">>, Count},
         { <<"child">>, Child}]),
