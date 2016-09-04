@@ -164,8 +164,9 @@ start_listener({Port, _Ip, _}, Opts) ->
     Path = proplists:get_value(path, Opts, "/sockjs"),
     Prefix = proplists:get_value(prefix, Opts, Path),
     PrefixBin = list_to_binary(Prefix),
-    Certfile = proplists:get_value(certfile, Opts, []),
-    Keyfile = proplists:get_value(keyfile, Opts, []),
+    % SSL MODE
+    %Certfile = proplists:get_value(certfile, Opts, []),
+    %Keyfile = proplists:get_value(keyfile, Opts, []),
     %CAcertfile = proplists:get_value(cacertfile, Opts, []),
     %Password = proplists:get_value(password, Opts, []),
     
@@ -214,15 +215,15 @@ init([Conn]) ->
     Socket = {sockjs, self(), Conn},
     Opts = [],
     {ok, C2SPid} = ejabberd_c2s_json:start_link({?MODULE, Socket}, Opts),
-    ?DEBUG(?MODULE_STRING ".~p Sockjs session started: Client pid : ~p", [ ?LINE, C2SPid]),
+    ?DEBUG(?MODULE_STRING "[~5w] Sockjs session started: Client pid : ~p", [ ?LINE, C2SPid]),
     {ok, #state{conn=Conn, c2s_pid=C2SPid}}.
 
 handle_call(_Msg, _From, State) ->
-	?WARNING_MSG(?MODULE_STRING " Unknown call msg: ~p", [_Msg]),
+	?WARNING_MSG(?MODULE_STRING "[~5w] Unknown call msg: ~p", [?LINE, _Msg]),
 	{reply, {error, unknown_msg}, State}.
 
 handle_cast({controlling_process, C2SPid}, State) ->
-    ?DEBUG(?MODULE_STRING " Controlling process: is ~p", [C2SPid]),
+    ?DEBUG(?MODULE_STRING "[~5w] Controlling process: is ~p", [?LINE, C2SPid]),
     {noreply, State#state{ c2s_pid = C2SPid}};
 
 handle_cast({become_controller, C2SPid}, State) ->

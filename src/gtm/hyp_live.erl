@@ -1,6 +1,6 @@
 -module(hyp_live).
 % Created hyp_live.erl the 13:33:37 (01/01/2015) on core
-% Last Modification of hyp_live.erl at 13:09:37 (04/09/2016) on core
+% Last Modification of hyp_live.erl at 13:15:56 (04/09/2016) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -218,7 +218,7 @@ init(timeout, #state{
             ?DEBUG(?MODULE_STRING "[~5w] HYP_LIVE: Notify process ok pid ~p roomref: ~p mod: ~p", [ ?LINE, Pid, RoomRef, Module]),
             fsm_next_state(normal, State#state{ notify=Pid });
 
-        {error, Reason} ->
+        {error, _Reason} ->
             ?ERROR_MSG(?MODULE_STRING "[~5w] HYP_LIVE: Notify FAIL create new room for type ~p (~p) mod: ~p", [ ?LINE, RoomRef, RoomId, Module]),
             {stop, normal, State}
     end;
@@ -317,7 +317,7 @@ test() ->
 %% FIXME Message should be split to only content and ignore signaling info;
 %% from, to, type
 %% Purpose Id must be incorporated in the final packet sent to users
-send_message(Message, #state{ roomref=Ref, users=Users, cid=Id, last=Last, notify=Notify } = State) ->
+send_message(Message, #state{ roomref=Ref, users=Users, cid=Id } = State) ->
     From = iolist_to_binary([<<"chat@harmony/">>, Ref]),
     Msgid = iolist_to_binary([Ref, $. , integer_to_list(Id)]),
     Iter = gb_trees:iterator(Users),
@@ -326,7 +326,7 @@ send_message(Message, #state{ roomref=Ref, users=Users, cid=Id, last=Last, notif
 
 notify(Message, #state{ notify=Notify }) when is_pid(Notify) ->
     hyp_notify:message(Notify, Message);
-notify(Message, #state{ notify=_ }) ->
+notify(_Message, #state{ notify=_ }) ->
     ok.
 
     % % FIXME if the room is not running, how to retrieve the last timestamp ?
@@ -463,13 +463,3 @@ publish({User, _, Iter}, Msgid, From, Message, #state{ host=Host, mod=Module } =
     ?DEBUG(?MODULE_STRING "[~5w] send_message: Module: ~p from: ~p to: ~p", [ ?LINE, Module, From, To ]), 
     Module:route(From, To, Packet ),
     publish(gb_trees:next(Iter), Msgid, From, Message, State).
-
-% create notification if needed (compute elapsed time to prevent spamming)
-notify(none, _, _, _, _) ->
-    ok;
-notify({User, _, Iter}, Msgid, From, Message, #state{ host=Host, mod=Module} = State) ->
-    To = iolist_to_binary([User,<<"@">>,Host]),
-    Packet = {chat, {Msgid, Message}},
-    ?DEBUG(?MODULE_STRING "[~5w] notify: Module: ~p from: ~p to: ~p", [ ?LINE, Module, From, To ]), 
-    notify(gb_trees:next(Iter), Msgid, From, Message, State).
-

@@ -4631,7 +4631,7 @@ action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, E
 %     mod_chat:route(Host, Element, Creator, message, Packet),
 %     mod_chat:route(Host, Element, Creator, add, [Creator]);
 
-action(#state{user=Username, sid=Sid} = _State, _Element, _Type, _Action, _Args, _Result) ->
+action(#state{user=_Username, sid=_Sid} = _State, _Element, _Type, _Action, _Args, _Result) ->
     ?DEBUG(?MODULE_STRING "[~5w] action on type ~p: ~p:~p(~p):\n~p", [ ?LINE, _Type, _Element, _Action, _Args, _Result ]),
     ok.
 
