@@ -1,6 +1,6 @@
 -module(hyp_live).
 % Created hyp_live.erl the 13:33:37 (01/01/2015) on core
-% Last Modification of hyp_live.erl at 14:46:08 (03/09/2016) on core
+% Last Modification of hyp_live.erl at 13:09:37 (04/09/2016) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -56,7 +56,7 @@
 
 % -define( UINT16(X),	X:16/native-unsigned).
 %-define( INACTIVITY_TIMEOUT, 5 * 60000). % 5 minutes
--define( INACTIVITY_TIMEOUT, 60 * 1000). % 10 seconds
+-define( INACTIVITY_TIMEOUT, 60 * 1000). % 60 seconds
 
 -record(question, {
     id,
@@ -426,9 +426,33 @@ prepare(Type, #state{ roomref=Fqid,  creator=_Userid } = State) when
             {stop, Error}
     end;
 
+prepare(Type, #state{ roomref=Fqid,  creator=_Userid, users=_Users } = State) when
+    Type =:= <<"article">> ->
+
+
+    ?DEBUG(?MODULE_STRING "[~5w] realtime article '~p'", [ ?LINE, Fqid ]),
+    {ok, normal, State};
+
+   % case hyp_data:execute(hyd_fqids, read, [Fqid]) of
+   %     {ok, Props} ->
+            %?DEBUG(?MODULE_STRING "[~5w] '~p': ~p", [ ?LINE, Fqid, Props ]),
+            %{ok, normal, State};
+            %% prepare(undefined, State); %% infinite loop
+            %% case hyp_data:extract([<<"info">>,<<"parent">>], Props) of
+            %%     undefined ->
+            %%         {stop, enoent};
+            %%     ParentFqid ->
+            %%         NewState = State#state{ roomref=ParentFqid },
+            %%         prepare(undefined, NewState)
+            %% end;
+
+   %     {error, Error} ->
+   %         {stop, Error}
+   % end; 
+
 prepare(Type, _State) ->
     ?DEBUG( ?MODULE_STRING "[~5w] Unhandled live process for type: ~p", [ ?LINE, Type ]),
-    {stop, einval}.
+    {stop, {einval, Type}}.
 
 % send realtime message about this new message
 publish(none, _, _, _, _) ->

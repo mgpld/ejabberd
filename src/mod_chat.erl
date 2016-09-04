@@ -407,9 +407,9 @@ handle_call({create, RoomId, From, RoomRef, Opts}, _From,
                     register_room(Host, RoomRef, Pid),
                     {reply, ok, State};
 
-                {error, Reason} ->
+                {error, Reason} = Error ->
                     ?ERROR_MSG(?MODULE_STRING "[~5w] HYP_LIVE: FAIL create new room for type ~p (~p) mod: ~p", [ ?LINE, RoomRef, RoomId, Module]),
-                    {reply, ok, State}
+                    {reply, Error, State}
 
             end;
 
