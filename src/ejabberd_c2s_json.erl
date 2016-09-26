@@ -464,6 +464,11 @@ session_established({login, SeqId, Args}, StateData) ->
                 %user = Nick})
     end;
 
+session_established({action, SeqId, Action}, StateData) ->
+    Answer = make_answer(SeqId, [{<<"status">>, <<"ok">>}]),
+    send_element(StateData, Answer),
+    fsm_next_state(session_established, StateData);
+
 %% We hibernate the process to reduce memory consumption after a
 %% configurable activity timeout
 session_established(timeout, StateData) ->
