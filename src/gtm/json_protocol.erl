@@ -1,6 +1,6 @@
 -module(json_protocol).
 % Created json_protocol.erl the 22:01:35 (14/05/2016) on core
-% Last Modification of json_protocol.erl at 09:24:27 (18/06/2016) on core
+% Last Modification of json_protocol.erl at 16:04:48 (20/09/2016) on core
 % 
 % Author: "ak" <ak@harmonygroup.net>
 %% Feel free to use, reuse and abuse the code in this file.
@@ -36,7 +36,7 @@ init(Ref, Socket, Transport, _Opts = []) ->
     Connection = {Transport, self(), Socket},
     Opts = [],
     {ok, Pid} = ejabberd_c2s_json:start_link({?MODULE, Connection}, Opts),
-    ?DEBUG(?MODULE_STRING ".~p session started: Client pid : ~p", [ ?LINE, Pid]),
+    ?DEBUG(?MODULE_STRING "[~5w] session started: Client pid : ~p", [ ?LINE, Pid]),
     loop(Socket, Transport, ?TIMEOUT, #state{ pid = Pid, timeout = 5000 }).
 
 loop(Socket, Transport, Timeout, #state{} = State) ->
@@ -48,14 +48,14 @@ loop(Socket, Transport, Timeout, #state{} = State) ->
     end,
     case Transport:recv(Socket, 0, Timeout) of
         {ok, Data} ->
-            %?DEBUG(?MODULE_STRING ".~p Data: ~p\n", [ ?LINE, Data ]),
+            ?DEBUG(?MODULE_STRING "[~5w] Data: ~p\n", [ ?LINE, Data ]),
             case sockjs_json:decode(Data) of
                 {ok, Decoded} ->
                     handle_data( Decoded, State ),
                     loop(Socket, Transport, Timeout, State);
 
                 _ ->
-                    ?DEBUG(?MODULE_STRING ".~p invalid Data: ~p\n", [ ?LINE, Data ]),
+                    ?DEBUG(?MODULE_STRING "[~5w] invalid Data: ~p\n", [ ?LINE, Data ]),
                     loop(Socket, Transport, Timeout, State)
             end;
 
@@ -63,7 +63,7 @@ loop(Socket, Transport, Timeout, #state{} = State) ->
             {error, einval}
     end.
 
-handle_data( Data, #state{ pid = Client } = State) ->
+handle_data( Data, #state{ pid = Client } = _State) ->
     case parse(Data) of
         [] ->
             ok;
@@ -87,7 +87,7 @@ monitor({_Module, Pid, _Socket}) ->
 
 send({Transport, _Pid, Socket}, Data) ->
     Json = sockjs_json:encode(Data),
-    Transport:send(Socket, Json).
+    Transport:send(Socket, [Json, $\n]).
 
 close({Transport, _Pid, Socket}) ->
     Transport:close(Socket).
