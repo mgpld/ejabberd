@@ -464,10 +464,27 @@ session_established({login, SeqId, Args}, StateData) ->
                 %user = Nick})
     end;
 
-session_established({action, SeqId, Action}, StateData) ->
-    Answer = make_answer(SeqId, [{<<"status">>, <<"ok">>}]),
-    send_element(StateData, Answer),
-    fsm_next_state(session_established, StateData);
+session_established({action, SeqId, Args}, State) when is_list(Args) ->
+    case fxml:get_attr_s(<<"operation">>, Args) of
+        <<>> ->
+            fsm_next_state(session_established, State);
+            
+        <<"login">> = Operation->
+            ?DEBUG(?MODULE_STRING "[~5w] Login with args: ~p", [ ?LINE, Args ]),
+            NewState = handle_query(Operation, SeqId, Args, State),
+            fsm_next_state(session_established, NewState);
+            %Params = [],
+            %hyd_fqids:action_async(SeqId, Element, Action, [ 0 | Params ]),
+            %Actions = State#state.aux_fields,
+            %NewState = State#state{aux_fields=[{SeqId, [ Element, Action, Params ]} | Actions ]},
+            %fsm_next_state(session_established, NewState);
+
+        _ ->
+            Answer = make_error(undefined, SeqId, 404, <<"invalid call">>),
+            send_element(State, Answer),
+            fsm_next_state(session_established, State)
+        
+    end;
 
 %% We hibernate the process to reduce memory consumption after a
 %% configurable activity timeout
@@ -1756,6 +1773,10 @@ make_result(SeqId, Result) when is_tuple(Result) ->
 make_result(SeqId, Result) when is_binary(Result) ->
     make_answer(SeqId, 200, [ 
         {<<"result">>, Result}
+    ]);
+make_result(SeqId, [<<>>]) ->
+    make_answer(SeqId, 204, [ 
+        {<<"result">>, []}
     ]);
 make_result(SeqId, [Result]) when is_binary(Result) ->
     make_answer(SeqId, 200, [ 
@@ -3659,7 +3680,7 @@ admin(#state{userid=Userid} = _State, Operation, User, Args) ->
 handle_action(Operation, SeqId, Args, State) ->
     case args(Args, [<<"to">>]) of
         [ Element ] ->
-            ?DEBUG(?MODULE_STRING " handle_Action: operation: ~p, on Element: ~p", [ Operation, Element] ),
+            ?DEBUG(?MODULE_STRING "[~5w] handle_Action: operation: ~p, on Element: ~p", [ ?LINE, Operation, Element] ),
             case get_args(State, Element, Operation) of
                 {error, Reason} ->
                     ?ERROR_MSG(?MODULE_STRING " handle_action error: ~p", [ Reason ]),
@@ -3668,43 +3689,48 @@ handle_action(Operation, SeqId, Args, State) ->
                     State;
 
                 {ok, []} -> % no extra args
-                    case data(State, hyd_fqids, action, [ Element, Operation, [ State#state.userid ]]) of
-                        {error, Reason} ->
-                            Answer = make_error(Reason, SeqId, 500, <<"error action">>),
-                            send_element(State, Answer),
-                            State;
+                    ?DEBUG(?MODULE_STRING "[~5w] handle_action no ActionArgs", [ ?LINE ]),
+                    hyd_fqids:action_async(SeqId, Element, Operation, [ State#state.userid ]),
+                    Actions = State#state.aux_fields,
+                    State#state{aux_fields=[{SeqId, [ Element, Operation, [] ]} | Actions ]};
 
-                        {ok, []} ->
-                            Answer = make_answer_not_found(SeqId),
-                            send_element(State, Answer),
-                            State;
-
-                        {ok, true} ->
-                            Answer = make_answer(SeqId, 200, [
-                                {<<"result">>, <<"true">>}
-                            ]),
-                            send_element(State, Answer),
-                            State;
-
-                        {ok, false} ->
-                            Answer = make_answer(SeqId, 200, [
-                                {<<"result">>, <<"false">>}
-                            ]),
-                            send_element(State, Answer),
-                            State;
-
-                        {ok, {Infos, Response}} ->
-                            Answer = make_result(SeqId, Response),
-                            send_element(State, Answer),
-                            action_trigger(State, Element, Infos, Operation, [], Response),
-                            State;
-
-                        % DEPRECATED
-                        {ok, Response} ->
-                            Answer = make_result(SeqId, Response),
-                            send_element(State, Answer),
-                            State
-                    end;
+%%                     case data(State, hyd_fqids, action, [ Element, Operation, [ State#state.userid ]]) of
+%%                         {error, Reason} ->
+%%                             Answer = make_error(Reason, SeqId, 500, <<"error action">>),
+%%                             send_element(State, Answer),
+%%                             State;
+%% 
+%%                         {ok, []} ->
+%%                             Answer = make_answer_not_found(SeqId),
+%%                             send_element(State, Answer),
+%%                             State;
+%% 
+%%                         {ok, true} ->
+%%                             Answer = make_answer(SeqId, 200, [
+%%                                 {<<"result">>, <<"true">>}
+%%                             ]),
+%%                             send_element(State, Answer),
+%%                             State;
+%% 
+%%                         {ok, false} ->
+%%                             Answer = make_answer(SeqId, 200, [
+%%                                 {<<"result">>, <<"false">>}
+%%                             ]),
+%%                             send_element(State, Answer),
+%%                             State;
+%% 
+%%                         {ok, {Infos, Response}} ->
+%%                             Answer = make_result(SeqId, Response),
+%%                             send_element(State, Answer),
+%%                             action_trigger(State, Element, Infos, Operation, [], Response),
+%%                             State;
+%% 
+%%                         % DEPRECATED
+%%                         {ok, Response} ->
+%%                             Answer = make_result(SeqId, Response),
+%%                             send_element(State, Answer),
+%%                             State
+%%                    end;
 
                 {ok, ActionArgs} ->
                     Params = action_args(Args, ActionArgs),
@@ -4751,3 +4777,34 @@ handle_operation(Type, SeqId, Response, State) ->
             send_element(State, Answer)
     end.
 
+
+handle_query(Operation, SeqId, Args, State) ->
+    case args(Args, [<<"to">>]) of
+        [ Element ] = Params ->
+            ?DEBUG(?MODULE_STRING "[~5w] handle_Action: operation: ~p, on Element: ~p", [ ?LINE, Operation, Element] ),
+            Module = <<"init">>, % specific module for initialisation
+            hyd_fqids:action_async(SeqId, Module, Operation, [ 0 | Params ]),
+            Actions = State#state.aux_fields,
+            State#state{aux_fields=[{SeqId, [ Element, Operation, Params ]} | Actions ]};
+
+            %?DEBUG(?MODULE_STRING "[~5w] handle_action ActionArgs: ~p, Args: ~p, -> Params: ~p", [ ?LINE, ActionArgs, Args, Params ]),
+            %% ActionArgs = [<<"application">>],
+            %% Params = action_args(Args, ActionArgs),
+            %% case check_args(ActionArgs, Params) of
+            %%     true ->
+            %%         ?DEBUG(?MODULE_STRING "[~5w] handle_action ActionArgs: ~p, Args: ~p, -> Params: ~p", [ ?LINE, ActionArgs, Args, Params ]),
+            %%         hyd_fqids:action_async(SeqId, Element, Operation, [ 0 | Params ]),
+            %%         Actions = State#state.aux_fields,
+            %%         State#state{aux_fields=[{SeqId, [ Element, Operation, Params ]} | Actions ]};
+
+            %%     false ->
+            %%         Answer = make_error(SeqId, 406, <<"invalid arguments provided">>),
+            %%         send_element(State, Answer),
+            %%         State
+            %% end;
+                
+        _ ->
+            Answer = make_error(SeqId, 406, <<"missing arguments: to">>),
+            send_element(State, Answer),
+            State
+    end.
