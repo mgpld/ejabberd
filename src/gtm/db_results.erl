@@ -1,6 +1,6 @@
 -module(db_results).
 % Created db_results.erl the 12:24:07 (27/05/2014) on core
-% Last Modification of db_results.erl at 23:16:44 (30/08/2016) on core
+% Last Modification of db_results.erl at 06:43:00 (01/10/2016) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -88,6 +88,7 @@ unpack(3, <<IndexCount:16,Rest/binary>>, Count, Result) ->
 unpack(4, Rest, Count, Result) ->
     ?DEBUG("list-of-list-key-subkey-value: count ~p", [ Count ]),
     %{NewResult, NewRest} = unpack_key(undefined, Rest, Result),
+    Result = orddict:new(),
     unpack_key(undefined, Rest, Result);
     %unpack(4, NewRest, Count - 1, NewResult);
     
@@ -113,7 +114,7 @@ unpack(_, <<>>, _Count, Result) ->
 unpack_values(0, Rest, Result) ->
     {Result, Rest};
 unpack_values(Count, <<IS:16,Index:IS/binary,Rest/binary>>,  Result) ->
-    ?DEBUG("index: ~p, subelements count: ~p", [ Index, Count ]),
+    %?DEBUG("index: ~p, subelements count: ~p", [ Index, Count ]),
     { NewResult, NewRest} = extract_values(Count, Rest, []),
     {[ { Index, NewResult } | Result ], NewRest};
 unpack_values(_Count, <<>> = Rest, Result) ->
@@ -122,25 +123,44 @@ unpack_values(_Count, <<>> = Rest, Result) ->
 unpack_key(_, <<>>, Result) ->
     {ok, Result};
 unpack_key(undefined, <<Count:16,KS:16,Key:KS/binary,SubCount:16,Rest/binary>>, Result) ->
-    ?DEBUG("Root key: ~p, ~p", [ Key, Count ]),
+    %?DEBUG("Root key: ~p with total ~p elements", [ Key, Count ]),
     { NewResult, NewRest } = unpack_subkey(SubCount, Rest, Result, Key),
-    %?DEBUG("NewRest: ~p", [ NewRest ]),
-    unpack_next(Count - 1, NewRest, [ NewResult | Result ], Key, []).
+    %?DEBUG("Key: ~p, NewResult: ~p", [ Key, NewResult ]),
+    unpack_next(Count - 1, NewRest, orddict:append(Key, NewResult, Result), Key, []).
+    %unpack_next(Count - 1, NewRest, [ NewResult | Result ], Key, []).
     %unpack_next(Count - 1, NewRest, [ {Key, NewResult} | Result ], Key, []).
 
+
+unpack_next(0, Rest, Result, Key, []) ->
+    unpack_key(undefined, Rest, Result);
 unpack_next(0, Rest, Result, Key, TmpResult) ->
-    ?DEBUG("unpack_next: end", []),
-    %?DEBUG("unpack_next: Key: ~p Result: ~p", [Key, Result]),
-    unpack_key(undefined, Rest, [ {Key, TmpResult} | Result ]);
+    %?DEBUG("* TmpResult: ~p", [ TmpResult ]),
+    %?DEBUG("unpack_next: end", []),
+    %?DEBUG("unpack_next: Key: ~p Result: ~p: TmpResult: ~p", [Key, Result, TmpResult]),
+    unpack_key(undefined, Rest, orddict:append_list(Key, TmpResult, Result));
+    %unpack_key(undefined, Rest, [ {Key, TmpResult} | Result ]);
 unpack_next(_, <<>>, Result, _, _) ->
-    {ok, Result};
-unpack_next(Count, <<SubCount:16,Rest/binary>>, Result, Key, TmpResult) ->
-    ?DEBUG("unpack_next: count ~p", [ Count ]),
+    {ok, orddict:to_list(Result)};
+unpack_next(Count, <<SubCount:16,Rest/binary>>, Result, Key, [] = TmpResult) ->
+    %?DEBUG("* TmpResult: ~p", [ TmpResult ]),
+    %?DEBUG("Key: ~p, unpack_next: count ~p [empty]", [ Key, Count ]),
     %?DEBUG("unpack_next: Key: ~p Result: ~p", [Key, Result]),
     { NewResult, NewRest } = unpack_subkey(SubCount, Rest, Result, Key),
-    unpack_next(Count - 1, NewRest, Result, Key, [ NewResult | TmpResult ]).
+    %?DEBUG("Key: ~p, NewResult: ~p [empty]", [ Key, NewResult ]),
+    unpack_next(Count - 1, NewRest, Result, Key, [NewResult]);
+unpack_next(Count, <<SubCount:16,Rest/binary>>, Result, Key, TmpResult) ->
+    %?DEBUG("Key: ~p, unpack_next: count ~p", [ Key, Count ]),
+    %?DEBUG("unpack_next: Key: ~p Result: ~p", [Key, Result]),
+    { NewResult, NewRest } = unpack_subkey(SubCount, Rest, Result, Key),
+    %?DEBUG("* Key: ~p, NewResult: ~p: TmpResult: ~p", [ Key, NewResult, TmpResult ]),
+    unpack_next(Count - 1, NewRest, Result, Key, [NewResult | TmpResult]). 
     %unpack_next(Count - 1, NewRest, [ {Key, NewResult} | Result ], Key, TmpResult).
 
+unpack_subkey(Count, <<SIS:16,SubIndex:SIS/binary,Rest/binary>>, _Result, Key) ->
+    %?DEBUG("subkey count: ~p index: ~p, sub-index: ~p" , [ Count, Index, SubIndex ]),
+    {Values, NewRest} = extract_values(Count, Rest, []),
+    %?DEBUG("Key: ~p, Values: ~p" , [ Key, Values ]),
+    {{SubIndex, Values}, NewRest}.
 
 % unpack_key_subkey_values(0, Rest, Result) ->
 %     {Result, Rest};
@@ -170,19 +190,14 @@ unpack_next(Count, <<SubCount:16,Rest/binary>>, Result, Key, TmpResult) ->
 % unpack_key_subkey_values(_Count, <<>> = Rest, Result) ->
 %     {Result, Rest}. 
 
-unpack_subkey(Count, <<SIS:16,SubIndex:SIS/binary,Rest/binary>>, _Result, Index) ->
-    ?DEBUG("subkey count: ~p index: ~p, sub-index: ~p" , [ Count, Index, SubIndex ]),
-    { Values, NewRest} = extract_values(Count, Rest, []),
-    { {SubIndex, Values}, NewRest}.
-    
 
 extract_values(0, Rest, Result) ->
     {Result, Rest};
 extract_values(Count, <<KS:16,Value:KS/binary,0:16,Rest/binary>>, Result) -> % when value is empty i.e. ""
-    ?DEBUG("elem: ~p, Value: ~p", [ Count, Value ]),
+    %?DEBUG("elem: ~p, Value: ~p, Result: ~p", [ Count, Value, Result ]),
     extract_values(Count - 1, Rest, [ {hyd:unquote(Value), <<>>} | Result ]); % unquote the key and set the empty binary <<>> as value
 extract_values(Count, <<KS:16,Key:KS/binary,VS:16,Value:VS/binary,Rest/binary>>, Result) ->
-    ?DEBUG("elem: ~p, Key: ~p, Value: ~p", [ Count, Key, Value ]),
+    %?DEBUG("elem: ~p, Key: ~p, Value: ~p, Result: ~p", [ Count, Key, Value, Result ]),
     extract_values(Count - 1, Rest, [ {Key, hyd:unquote(Value)} | Result ]);
 extract_values(_Count, <<>> = Rest, Result) ->
     {Result, Rest}. 
