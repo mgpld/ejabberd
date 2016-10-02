@@ -4457,43 +4457,49 @@ seqid(Inc) ->
     Title :: binary() | list(),
     Content :: binary() | list()) -> true.
 
-send_notification(#state{user=_Username, sid=_Sid, userid=Userid} = State, Extra, Class, Source, Destination, Token, Title, Content ) ->
+% sending an invitation to someone to connect
+% create the notification in the destination userid 
+%send_notification(#state{userid=Userid} = State, Extra, <<"invite">> = Class, <<"invitation">> = Source, Destination, Token, Title, Content ) ->
+send_notification(#state{userid=Userid} = State, Extra, Class, Source, Destination, Token, Title, Content ) ->
     ExtraArgs = args(Extra, [<<"extra">>]), % theses extra args are NOT written in the db
     Args = [ Userid, Class, Source, Destination, Token, Title, Content ],
 
-    ?DEBUG(?MODULE_STRING " [~s (~p|~p)] send_notification: args ~p", [ _Username, seqid(), _Sid, Args ]),
+    ?DEBUG(?MODULE_STRING "[~5w] send_notification invite.invitation: args ~p", [ ?LINE, Args ]),
+    case hyd_fqids:action(<<"notification">>, <<"create">>, Args) of % synchronous
+        {error, Reason} -> 
+            ?ERROR_MSG(?MODULE_STRING "[~5w] send_notification ~s.~s: error: ~p", [ ?LINE, Class, Source, Reason ]);
+        
+        NotificationId ->
+            ?DEBUG(?MODULE_STRING "[~5w] send_notification invite.invitation: id: ~p", [ ?LINE, NotificationId ]),
 
-    % NOTIFICATIONS
-    hyd_fqids:action(<<"notification">>, <<"create">>, Args), % synchronous
+            case get_user_pids(Destination, State#state.server) of
+            %case get_user_pids(Userid, State#state.server) of
+                [] ->
+                    ?DEBUG(?MODULE_STRING "[~5w] send_notification invite.invitation: user ~p is offline, done.", [ ?LINE, Destination ]),
+                    ok;
 
-    case get_user_pids(Destination, State#state.server) of
-        [] ->
-            ok;
-
-        Pids ->
-            ?DEBUG(?MODULE_STRING " notification Sending to ~p, pids are: ~p", [ Destination, Pids ]),
-            %% FIXME we are sending to the process of the user, not the socket
-            %% We could use erlang terms instead of JSON
-            Packet = [{<<"message">>, [
-                {<<"type">>,<<"notification">>},
-                {<<"from">>, [
-                    {<<"username">>, State#state.user},
-                    {<<"id">>, State#state.userid}]},
-                {<<"class">>, Class},
-                {<<"source">>, Source},
-                {<<"bundle">>, Token},
-                {<<"extra">>, ExtraArgs},
-                {<<"header">>, Title},
-                {<<"text">>, Content},
-                {<<"persistent">>, <<"false">>}
-            ]}],
-            Me = self(),
-            %Body = {binary, (Json)},
-            lists:foreach( fun( Pid ) ->   
-                Pid ! {route, Me, Pid, {plain, Packet}}
-            end, Pids)
+                Pids ->
+                    ?DEBUG(?MODULE_STRING "[~5w] send_notification Sending to ~p, pids are: ~p", [ ?LINE, Destination, Pids ]),
+                    Packet = [{<<"message">>, [
+                        {<<"type">>,<<"notification">>},
+                        {<<"from">>, [
+                            {<<"username">>, State#state.user},
+                            {<<"id">>, State#state.userid}]},
+                        {<<"class">>, Class},
+                        {<<"id">>, NotificationId },
+                        {<<"source">>, Source},
+                        {<<"bundle">>, Token},
+                        {<<"extra">>, ExtraArgs},
+                        {<<"header">>, Title},
+                        {<<"text">>, Content},
+                        {<<"persistent">>, <<"false">>}
+                    ]}],
+                    Me = self(),
+                    lists:foreach( fun( Pid ) ->   
+                        Pid ! {route, Me, Pid, {plain, Packet}}
+                    end, Pids)
+            end
     end.
-    
 
 %notification_invite(State, Args, Destination, Application, Title, Content) ->
 %    send_notification(State, Args, <<"invitation">>, <<"user">>, Destination, Application, Title, Content).
