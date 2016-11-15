@@ -1,6 +1,6 @@
 -module(db_results).
 % Created db_results.erl the 12:24:07 (27/05/2014) on core
-% Last Modification of db_results.erl at 06:43:00 (01/10/2016) on core
+% Last Modification of db_results.erl at 19:05:43 (02/10/2016) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -27,6 +27,10 @@ unpack(Data) ->
     %%?DEBUG(" -- Unpack --( ~p bytes )\n~p\n", [ iolist_size(Data), Data ]),
     ?DEBUG(" -- Unpack --( ~p bytes )", [ iolist_size(Data) ]),
     unpack(Data, undefined, []).
+
+% erlang external format
+unpack(<<131,_/binary>> = Data, undefined, _Result) ->
+    {ok, binary_to_term(Data)};
 
 % Informational Errors
 unpack(<<Count:16,0,Rest/binary>>, undefined, Result) ->
@@ -131,7 +135,7 @@ unpack_key(undefined, <<Count:16,KS:16,Key:KS/binary,SubCount:16,Rest/binary>>, 
     %unpack_next(Count - 1, NewRest, [ {Key, NewResult} | Result ], Key, []).
 
 
-unpack_next(0, Rest, Result, Key, []) ->
+unpack_next(0, Rest, Result, _Key, []) ->
     unpack_key(undefined, Rest, Result);
 unpack_next(0, Rest, Result, Key, TmpResult) ->
     %?DEBUG("* TmpResult: ~p", [ TmpResult ]),
@@ -141,7 +145,7 @@ unpack_next(0, Rest, Result, Key, TmpResult) ->
     %unpack_key(undefined, Rest, [ {Key, TmpResult} | Result ]);
 unpack_next(_, <<>>, Result, _, _) ->
     {ok, orddict:to_list(Result)};
-unpack_next(Count, <<SubCount:16,Rest/binary>>, Result, Key, [] = TmpResult) ->
+unpack_next(Count, <<SubCount:16,Rest/binary>>, Result, Key, [] = _TmpResult) ->
     %?DEBUG("* TmpResult: ~p", [ TmpResult ]),
     %?DEBUG("Key: ~p, unpack_next: count ~p [empty]", [ Key, Count ]),
     %?DEBUG("unpack_next: Key: ~p Result: ~p", [Key, Result]),
@@ -156,7 +160,7 @@ unpack_next(Count, <<SubCount:16,Rest/binary>>, Result, Key, TmpResult) ->
     unpack_next(Count - 1, NewRest, Result, Key, [NewResult | TmpResult]). 
     %unpack_next(Count - 1, NewRest, [ {Key, NewResult} | Result ], Key, TmpResult).
 
-unpack_subkey(Count, <<SIS:16,SubIndex:SIS/binary,Rest/binary>>, _Result, Key) ->
+unpack_subkey(Count, <<SIS:16,SubIndex:SIS/binary,Rest/binary>>, _Result, _Key) ->
     %?DEBUG("subkey count: ~p index: ~p, sub-index: ~p" , [ Count, Index, SubIndex ]),
     {Values, NewRest} = extract_values(Count, Rest, []),
     %?DEBUG("Key: ~p, Values: ~p" , [ Key, Values ]),
