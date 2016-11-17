@@ -362,12 +362,24 @@ session_established({login, SeqId, Args}, StateData) ->
         userid=Id
     },
 
-    data_specific(TmpState, hyd_users, session_init, [ Userip, Userport ]),
 
     R = base64:encode(term_to_binary(Now)),
-    #jid{lserver=LoginServer, luser=LoginUser} = IdJid = jlib:string_to_jid(Id),
+    % #jid{lserver=LoginServer, luser=LoginUser} = IdJid = jlib:string_to_jid(Id),
+    DataId = case binary:split(Id, <<"@">>, [ global ]) of
+         [ LoginUser, LoginServer ] ->
+            %jlib:string_to_jid(<<LoginUser/binary, "@", LoginServer/binary>>);
+            userid(TmpState, LoginUser, LoginServer);
+        
+        [ LoginUser, _Domain, LoginServer | _ ] ->
+            % IdJid = jlib:string_to_jid(<<LoginUser/binary, "@", LoginServer/binary>>),
+            userid(TmpState, <<LoginUser/binary, "@", _Domain/binary>>, LoginServer)
 
-    DataId = userid(TmpState, LoginUser, LoginServer),
+    end,
+
+    IdJid = undefined,
+
+
+    %DataId = userid(TmpState, LoginUser, LoginServer),
     case DataId of
         {error, invalid} ->
             ?INFO_MSG(?MODULE_STRING " LOGIN FAIL: invalid user: ~p domain: ~p", [ LoginUser, LoginServer ]),
@@ -400,6 +412,10 @@ session_established({login, SeqId, Args}, StateData) ->
             {stop, normal, TmpState#state{ jid = IdJid }};
 
         {ok, UserId} ->
+
+            % create the session
+            data_specific(TmpState, hyd_users, session_init, [ Userip, Userport ]),
+
             % [GTM] every data inside the "visible" category
             %UserInfos = case data_specific(TmpState, hyd_users, info, [ UserId, <<"visible">> ]) of
             UserInfos = case data_specific(TmpState, hyd_users, internal, [ UserId ]) of
@@ -430,7 +446,8 @@ session_established({login, SeqId, Args}, StateData) ->
                 {<<"domain">>, TmpState#state.server},
                 {<<"id">>, UserId},
                 {<<"timeout">>, ?C2S_AUTHORIZED_TIMEOUT}, %% TODO add module_info(attributes) -> vsn
-                {<<"infos">>, {struct, UserInfos}} | SessionInfos ]),
+                {<<"infos">>, UserInfos} | SessionInfos ]),
+                %{<<"infos">>, {struct, UserInfos}} | SessionInfos ]),
             %send_element(TmpState, (Answer)),
             send_element(TmpState, Answer),
 
