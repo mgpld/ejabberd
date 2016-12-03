@@ -334,7 +334,7 @@ get_subscribed(FsmRef) ->
 session_established({login, SeqId, Args}, StateData) ->
     
     Id = fxml:get_attr_s(<<"id">>, Args),
-    _Password = fxml:get_attr_s(<<"pass">>, Args),
+    Password = fxml:get_attr_s(<<"pass">>, Args),
     %Token = fxml:get_attr_s(<<"token">>, Args), %% Token is for rebinding or login
     Now = os:timestamp(),
     
@@ -368,18 +368,16 @@ session_established({login, SeqId, Args}, StateData) ->
     DataId = case binary:split(Id, <<"@">>, [ global ]) of
          [ LoginUser, LoginServer ] ->
             %jlib:string_to_jid(<<LoginUser/binary, "@", LoginServer/binary>>);
-            userid(TmpState, LoginUser, LoginServer);
+            userid(TmpState, LoginUser, LoginServer, Password);
         
         [ LoginUser, _Domain, LoginServer | _ ] ->
             % IdJid = jlib:string_to_jid(<<LoginUser/binary, "@", LoginServer/binary>>),
-            userid(TmpState, <<LoginUser/binary, "@", _Domain/binary>>, LoginServer)
+            userid(TmpState, <<LoginUser/binary, "@", _Domain/binary>>, LoginServer, Password)
 
     end,
 
     IdJid = undefined,
 
-
-    %DataId = userid(TmpState, LoginUser, LoginServer),
     case DataId of
         {error, invalid} ->
             ?INFO_MSG(?MODULE_STRING " LOGIN FAIL: invalid user: ~p domain: ~p", [ LoginUser, LoginServer ]),
@@ -388,7 +386,7 @@ session_established({login, SeqId, Args}, StateData) ->
                 {<<"success">>, <<"false">>}, 
                 {<<"connection">>,<<"close">>},
                 {<<"error">>, [
-                    {<<"description">>, <<"unknown user">>},
+                    {<<"description">>, <<"invalid user">>},
                     {<<"code">>, 404}
                     ]
                 }]),
@@ -462,7 +460,6 @@ session_established({login, SeqId, Args}, StateData) ->
             end),
 
             Online = initial_presence(TmpState, Username, [], UserId),
-
             Status = <<"online">>,
             UserJid = jlib:string_to_jid(Username),
 
@@ -478,7 +475,6 @@ session_established({login, SeqId, Args}, StateData) ->
                 access = Status,
                 userid = UserId,
                 user = Username})
-                %user = Nick})
     end;
 
 session_established({action, SeqId, Args}, State) when is_list(Args) ->
@@ -4034,8 +4030,8 @@ handle_message(Message, _From, _To, _) ->
     ?DEBUG(?MODULE_STRING " handle_message default: From: ~p, To: ~p\n~p", [ _From, _To, Message ]),
     {ok, Message}.
 
-userid(State, User, Server) ->
-    case data_specific(State, hyd_users, userid, [User,Server]) of
+userid(State, User, Server, Password) ->
+    case data_specific(State, hyd_users, userid, [User,Server,Password]) of
         [] ->
             {error, invalid};
 

@@ -1,6 +1,6 @@
 -module(hyd_users).
 % Created hyd_users.erl the 17:16:36 (12/10/2013) on core
-% Last Modification of hyd_users.erl at 22:23:28 (30/08/2016) on core
+% Last Modification of hyd_users.erl at 12:41:01 (21/11/2016) on core
 %
 % Author: rolph
 % Harmony Data - Users
@@ -37,7 +37,7 @@
     contacts_from_category/2,
     contacts_info_from_category/2,
     contacts_info_from_invitations/2,
-    userid/2
+    userid/3
 ]).
 
 -export([
@@ -565,11 +565,12 @@ comgroups(Userid) ->
 
 -spec userid(
     Username :: list() | binary(),
-    Domain :: list() | binary()) -> list().
+    Domain :: list() | binary(),
+    Passord :: list() | binary()) -> list().
 
-userid(Username,Domain) ->
+userid(Username,Domain,Password) ->
     Ops = [
-        hyd:operation(<<"userid">>, module(), [ Username, Domain ])
+        hyd:operation(<<"userid">>, module(), [ Username, Domain, Password ])
     ],
     run(Ops).
 
