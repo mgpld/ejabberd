@@ -157,6 +157,7 @@ socket_type() ->
 -type ip_port_tcp() :: {inet:port_number(), inet:ip4_address(), tcp}.
 -spec start_listener(ip_port_tcp(), [listener_opt()]) -> {ok, pid()}.
 start_listener({Port, _Ip, _}, Opts) ->
+    start_app(cowlib),
     start_app(ranch),
     start_app(cowboy),
     start_app(sockjs),
@@ -164,10 +165,11 @@ start_listener({Port, _Ip, _}, Opts) ->
     Path = proplists:get_value(path, Opts, "/sockjs"),
     Prefix = proplists:get_value(prefix, Opts, Path),
     PrefixBin = list_to_binary(Prefix),
+
     % SSL MODE
-    %Certfile = proplists:get_value(certfile, Opts, []),
-    %Keyfile = proplists:get_value(keyfile, Opts, []),
-    %CAcertfile = proplists:get_value(cacertfile, Opts, []),
+    Certfile = proplists:get_value(certfile, Opts, []),
+    Keyfile = proplists:get_value(keyfile, Opts, []),
+    CAcertfile = proplists:get_value(cacertfile, Opts, []),
     %Password = proplists:get_value(password, Opts, []),
     
     SockjsState = sockjs_handler:init_state(PrefixBin, fun service_ej/3, #sockjs_state{}, []),
@@ -195,19 +197,42 @@ start_listener({Port, _Ip, _}, Opts) ->
     Routes = [{'_',  VhostRoutes}], % any vhost
     
     Dispatch = cowboy_router:compile( Routes ),
+
+    case proplists:get_value(ssl, Opts, false) of
+        false ->
+            ok;
+
+        true ->
+            ?DEBUG(?MODULE_STRING "[~5w] Sockjs starting tls handler on port: ~p", [ ?LINE, Port + 2]),
+            ?DEBUG(?MODULE_STRING "[~5w] Sockjs starting tls certfile: ~p", [ ?LINE, Certfile]),
+            ?DEBUG(?MODULE_STRING "[~5w] Sockjs starting tls keyfile: ~p", [ ?LINE, Keyfile]),
+            case cowboy:start_https({ejabberd_sockjs_ssl, Port+2}, 100, [
+                    {port, Port+2},
+                    {log_alert, false},
+                    %{cacertfile, CAcertfile},
+                    %{password, Password},
+                    {version, 'tls1.2'},
+                    %{ciphers,[{dhe_rsa, aes_256_cbc, sha}]}, % {dhe_rsa,aes_256_cbc,sha}
+                    {certfile, binary_to_list(Certfile)},
+                    {keyfile, binary_to_list(Keyfile)}
+                ],
+                [{max_keepalive, 50}, {env, [{dispatch, Dispatch}]}]) of
+
+                {ok, _} = Ok ->
+                    ?DEBUG(?MODULE_STRING "[~5w] Sockjs starting OK result: ~p", [ ?LINE, Ok]),
+                    Ok;
+
+                {error, _} = Error ->
+                    ?DEBUG(?MODULE_STRING "[~5w] Sockjs starting result: ~p", [ ?LINE, Error]),
+                    Error
+           end
+                    
+    end,
+
     cowboy:start_http({ejabberd_sockjs_http, Port}, 100,
     	[{port, Port}],
     	[{env, [{dispatch, Dispatch}]}]).
     
-    %cowboy:start_https({ejabberd_sockjs_ssl, Port}, 100, [
-    %        {port, Port},
-    %        {log_alert, false},
-    %        %{cacertfile, CAcertfile},
-    %        %{password, Password},
-    %        {certfile, binary_to_list(Certfile)},
-    %        {keyfile, binary_to_list(Keyfile)}
-    %    ],
-    %    [{max_keepalive, 50}, {env, [{dispatch, Dispatch}]}]).
     
 
 %% gen_server callbacks
@@ -227,7 +252,7 @@ handle_cast({controlling_process, C2SPid}, State) ->
     {noreply, State#state{ c2s_pid = C2SPid}};
 
 handle_cast({become_controller, C2SPid}, State) ->
-	?DEBUG(?MODULE_STRING " Become controller for: ~p", [ C2SPid ]),
+	?DEBUG(?MODULE_STRING "[~5w] Become controller for: ~p", [ ?LINE, C2SPid ]),
 	
 	NSt = State#state{prebuff = [], c2s_pid = C2SPid},
 	{noreply, NSt};
@@ -282,7 +307,7 @@ service_ej(_Conn, {recv, _} = Packet, State) ->
     {ok, State};
 
 service_ej(_Conn, closed, #sockjs_state{ conn_pid=Pid } = State) ->
-    ?DEBUG(?MODULE_STRING "[~5w] Conn: ~p, closed !, State: ~p", [ ?LINE, _Conn, State ]),
+    ?DEBUG(?MODULE_STRING "[~5w] Conn: ~p, got 'closed' !, State: ~p", [ ?LINE, _Conn, State ]),
     gen_server:cast(Pid, stop),
     {ok, State}.
 
@@ -327,6 +352,12 @@ to_event(Id, <<"action">>, {struct, Args}) ->
 to_event(Id, <<"action">>, Action) ->
     action(Id, Action);
 
+to_event(Id, <<"admin">>, {struct, Args}) ->
+    admin(Id, Args);
+
+to_event(Id, <<"admin">>, Action) ->
+    admin(Id, Action);
+
 to_event(Id, <<"invite">>, {struct, Args}) ->
     invite(Id, Args);
 
@@ -354,19 +385,31 @@ action(Id, Args) ->
 presence(Id, Args) ->
     {presence, Id, Args}.
 
+% An admin operation is sent.
+admin(Id, Args) ->
+    {admin, Id, Args}.
+
 % An invite is sent, about a chat room or a web conference etc.
 invite(Id, Args) ->
     {invite, Id, Args}.
 
+
 handle_data( Data, #state{c2s_pid=Client,conn=Conn} = _State ) ->
     case parse(Data) of
         [] ->
-            ?ERROR_MSG(?MODULE_STRING "[~5w] Error don't handle:\n~p", [ ?LINE, Data ]);
+            ?ERROR_MSG(?MODULE_STRING "[~5w] Error don't handle:\n~p", [ ?LINE, Data ]),
+            Packet = [{<<"error">>, [ 
+                {<<"code">>, <<"998">>},
+                {<<"type">>, <<"parse error">>}
+            ]}],
+            Json = sockjs_json:encode(Packet),
+            sockjs_session:send(Json, Conn),
+            ok;
 
         {undefined, Type, Args} ->
             ?ERROR_MSG(?MODULE_STRING "[~5w] Unhandled json message type: ~p, args: ~p", [ ?LINE, Type, Args ]),
             Packet = [{<<"error">>, [ 
-                {<<"code">>, 999},
+                {<<"code">>, <<"999">>},
                 {<<"type">>, <<"protocol">>}
             ]}],
             Json = sockjs_json:encode(Packet),
@@ -374,7 +417,7 @@ handle_data( Data, #state{c2s_pid=Client,conn=Conn} = _State ) ->
             ok;
 	    
         Event ->
-            ?DEBUG(?MODULE_STRING " Sending: ~p to ~p", [ Event, Client ]),
+            ?DEBUG(?MODULE_STRING "[~5w] Sending: ~p to ~p", [ ?LINE, Event, Client ]),
             catch gen_fsm:send_event(Client, Event)
     end.
 
