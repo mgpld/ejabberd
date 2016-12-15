@@ -374,7 +374,7 @@ handle_data( Data, #state{c2s_pid=Client,conn=Conn} = _State ) ->
             ok;
 	    
         Event ->
-            ?DEBUG(?MODULE_STRING " Sending: ~p to ~p", [ Event, Client ]),
+            ?DEBUG(?MODULE_STRING "[~5w] Sending: ~p to ~p", [ ?LINE, Event, Client ]),
             catch gen_fsm:send_event(Client, Event)
     end.
 
