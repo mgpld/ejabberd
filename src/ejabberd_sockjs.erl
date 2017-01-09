@@ -158,6 +158,7 @@ socket_type() ->
 -spec start_listener(ip_port_tcp(), [listener_opt()]) -> {ok, pid()}.
 start_listener({Port, _Ip, _}, Opts) ->
     start_app(ranch),
+    start_app(cowlib),
     start_app(cowboy),
     start_app(sockjs),
     

@@ -1,6 +1,6 @@
 -module(hyp_live).
 % Created hyp_live.erl the 13:33:37 (01/01/2015) on core
-% Last Modification of hyp_live.erl at 13:15:56 (04/09/2016) on core
+% Last Modification of hyp_live.erl at 13:30:01 (15/12/2016) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -407,6 +407,26 @@ prepare(Type, #state{ roomref=Fqid, creator=Userid, users=Users } = State) when
         {error, Error} ->
             {stop, Error}
     end;
+
+prepare(Type, #state{ roomref=Fqid, creator=Userid, users=Users } = State) when 
+    Type =:= <<"conversation">> ->
+
+    case hyp_data:action(Userid, Fqid, <<"members">>, []) of
+
+        {ok, {_Infos, Subscriber}} when is_binary(Subscriber) ->
+            NewUsers = gb_trees:enter(Subscriber, undefined, Users),
+            {ok, init, State#state{ users=NewUsers }, 0};
+
+        {ok, {_Infos, Subscribers}} when is_list(Subscribers) ->
+            NewUsers = lists:foldl( fun( Id, Tree ) ->
+                gb_trees:enter(Id, undefined, Tree)
+            end, Users, Subscribers),
+            {ok, init, State#state{ users=NewUsers }, 0};
+    
+        {error, Error} ->
+            {stop, Error}
+    end;
+
 
 % inform the parent (owner) of this drop that a new element has been added
 prepare(Type, #state{ roomref=Fqid,  creator=_Userid } = State) when 
