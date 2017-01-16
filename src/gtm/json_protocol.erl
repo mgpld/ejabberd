@@ -1,6 +1,6 @@
 -module(json_protocol).
 % Created json_protocol.erl the 22:01:35 (14/05/2016) on core
-% Last Modification of json_protocol.erl at 16:04:48 (20/09/2016) on core
+% Last Modification of json_protocol.erl at 10:47:20 (16/12/2016) on core
 % 
 % Author: "ak" <ak@harmonygroup.net>
 %% Feel free to use, reuse and abuse the code in this file.
@@ -25,7 +25,7 @@
     timeout 
 }).
 
--define(TIMEOUT, 10000).
+-define(TIMEOUT, 60000).
 
 start_link(Ref, Socket, Transport, Opts) ->
     Pid = spawn_link(?MODULE, init, [Ref, Socket, Transport, Opts]),
@@ -37,12 +37,12 @@ init(Ref, Socket, Transport, _Opts = []) ->
     Opts = [],
     {ok, Pid} = ejabberd_c2s_json:start_link({?MODULE, Connection}, Opts),
     ?DEBUG(?MODULE_STRING "[~5w] session started: Client pid : ~p", [ ?LINE, Pid]),
-    loop(Socket, Transport, ?TIMEOUT, #state{ pid = Pid, timeout = 5000 }).
+    loop(Socket, Transport, ?TIMEOUT, #state{ pid = Pid, timeout = ?TIMEOUT }).
 
 loop(Socket, Transport, Timeout, #state{} = State) ->
     receive
         Message ->
-            ?DEBUG(?MODULE_STRING ".~p message: ~p\n", [ ?LINE, Message ])
+            ?DEBUG(?MODULE_STRING "[~5w] message: ~p\n", [ ?LINE, Message ])
     after 0 ->
         ok
     end,

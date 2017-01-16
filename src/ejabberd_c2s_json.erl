@@ -4605,7 +4605,7 @@ action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, E
     Type =:= <<"message">>;
     Type =:= <<"photo">> ->
 
-    ?DEBUG(?MODULE_STRING " [~s (~p|~p)] action ~p ~p:~p(~p): ~p", [ _Username, seqid(), _Sid, Element, Type, "addRead", [Parent], _Result ]),
+    ?DEBUG(?MODULE_STRING "[~5w] [~s (~p|~p)] action ~p ~p:~p(~p): ~p", [ ?LINE, _Username, seqid(), _Sid, Element, Type, "addRead", [Parent], _Result ]),
 
     RoomType = 0,
     mod_chat:create_room(Host, RoomType, Creator, Parent, []), % this will create synchronously the room if needed
@@ -4654,6 +4654,18 @@ action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, E
         { <<"child">>, Child}]),
     mod_chat:route(Host, Element, Creator, message, Packet);
 
+action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, Element, Type, <<"addChild">>, [Child], [Count]) when 
+    Type =:= <<"conversationgroup">>;
+    Type =:= <<"conversation">> ->
+
+    RoomType = 0,
+    mod_chat:create_room(Host, RoomType, Creator, Element, []), % this will create synchronously the room if needed
+    Packet = make_packet( _State, <<"add">>, [
+        { <<"parent">>, Element},
+        { <<"count">>, Count},
+        { <<"child">>, Child}]),
+    mod_chat:route(Host, Element, Creator, message, Packet);
+
 % when an addChild has been processed in a page, comgroup, or timeline, this new child must be forwarded to
 % all subscribers of this page, comgroup or timeline.
 action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, Element, Type, <<"addChild">>, [Child], [Count]) when 
@@ -4682,7 +4694,7 @@ action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, E
 %     mod_chat:route(Host, Element, Creator, add, [Creator]);
 
 action(#state{user=_Username, sid=_Sid} = _State, _Element, _Type, _Action, _Args, _Result) ->
-    ?DEBUG(?MODULE_STRING "[~5w] action on type ~p: ~p:~p(~p):\n~p", [ ?LINE, _Type, _Element, _Action, _Args, _Result ]),
+    ?DEBUG(?MODULE_STRING "[~5w] default: action on type '~p': Element: '~p' Action: '~p' Args: '~p' Result: '~p'", [ ?LINE, _Type, _Element, _Action, _Args, _Result ]),
     ok.
 
 ok( Do, Success ) ->
