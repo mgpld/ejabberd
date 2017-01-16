@@ -4655,6 +4655,7 @@ action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, E
     mod_chat:route(Host, Element, Creator, message, Packet);
 
 action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, Element, Type, <<"addChild">>, [Child], [Count]) when 
+    Type =:= <<"conversationgroup">>;
     Type =:= <<"conversation">> ->
 
     RoomType = 0,
@@ -4693,7 +4694,7 @@ action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, E
 %     mod_chat:route(Host, Element, Creator, add, [Creator]);
 
 action(#state{user=_Username, sid=_Sid} = _State, _Element, _Type, _Action, _Args, _Result) ->
-    ?DEBUG(?MODULE_STRING "[~5w] action on type ~p: ~p:~p(~p):\n~p", [ ?LINE, _Type, _Element, _Action, _Args, _Result ]),
+    ?DEBUG(?MODULE_STRING "[~5w] default: action on type '~p': Element: '~p' Action: '~p' Args: '~p' Result: '~p'", [ ?LINE, _Type, _Element, _Action, _Args, _Result ]),
     ok.
 
 ok( Do, Success ) ->

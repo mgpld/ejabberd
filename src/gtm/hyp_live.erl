@@ -1,6 +1,6 @@
 -module(hyp_live).
 % Created hyp_live.erl the 13:33:37 (01/01/2015) on core
-% Last Modification of hyp_live.erl at 13:30:01 (15/12/2016) on core
+% Last Modification of hyp_live.erl at 00:37:28 (10/01/2017) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -219,7 +219,7 @@ init(timeout, #state{
             fsm_next_state(normal, State#state{ notify=Pid });
 
         {error, _Reason} ->
-            ?ERROR_MSG(?MODULE_STRING "[~5w] HYP_LIVE: Notify FAIL create new room for type ~p (~p) mod: ~p", [ ?LINE, RoomRef, RoomId, Module]),
+            ?ERROR_MSG(?MODULE_STRING "[~5w] HYP_LIVE: Notify process failed. Error creating new room for type ~p (~p) mod: ~p", [ ?LINE, RoomRef, RoomId, Module]),
             {stop, normal, State}
     end;
 
@@ -389,8 +389,10 @@ prepare(undefined, #state{ roomref=Fqid, creator=_Userid } = State) ->
     end;
 
 prepare(Type, #state{ roomref=Fqid, creator=Userid, users=Users } = State) when 
-    Type =:= <<"group">>;
-    Type =:= <<"thread">> ->
+    Type =:= <<"conversationgroup">>;
+    Type =:= <<"conversation">>;
+    Type =:= <<"thread">>;
+    Type =:= <<"group">> ->
 
     case hyp_data:action(Userid, Fqid, <<"members">>, []) of
 
@@ -409,6 +411,7 @@ prepare(Type, #state{ roomref=Fqid, creator=Userid, users=Users } = State) when
     end;
 
 prepare(Type, #state{ roomref=Fqid, creator=Userid, users=Users } = State) when 
+    Type =:= <<"conversationgroup">>;
     Type =:= <<"conversation">> ->
 
     case hyp_data:action(Userid, Fqid, <<"members">>, []) of
