@@ -159,7 +159,6 @@ socket_type() ->
 start_listener({Port, _Ip, _}, Opts) ->
     start_app(cowlib),
     start_app(ranch),
-    start_app(cowlib),
     start_app(cowboy),
     start_app(sockjs),
     
@@ -170,7 +169,7 @@ start_listener({Port, _Ip, _}, Opts) ->
     % SSL MODE
     Certfile = proplists:get_value(certfile, Opts, []),
     Keyfile = proplists:get_value(keyfile, Opts, []),
-    CAcertfile = proplists:get_value(cacertfile, Opts, []),
+    %CAcertfile = proplists:get_value(cacertfile, Opts, []),
     %Password = proplists:get_value(password, Opts, []),
     
     SockjsState = sockjs_handler:init_state(PrefixBin, fun service_ej/3, #sockjs_state{}, []),
@@ -182,14 +181,6 @@ start_listener({Port, _Ip, _}, Opts) ->
     {ok, _} = ranch:start_listener(json_plain, 50,
         ranch_tcp, [{port, Port + 1}], json_protocol, []),
 
-%    {ok, _} = ranch:start_listener(uploader_secure, 50,
-%       ranch_ssl, [
-%           {port, 5556},
-%           {certfile, "uploader.cert.pem"},
-%           {version, 'tlsv1.2'},
-%           {ciphers,[{dhe_rsa, aes_256_cbc, sha}]} % {dhe_rsa,aes_256_cbc,sha}
-%       ], uploader_protocol, []),
-    
     VhostRoutes = [
         {<<"/sockjs/[...]">>, sockjs_cowboy_handler, SockjsState},
         {<<"/rt/[...]">>, sockjs_cowboy_handler, RtState},
