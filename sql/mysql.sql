@@ -1,5 +1,5 @@
 --
--- ejabberd, Copyright (C) 2002-2016   ProcessOne
+-- ejabberd, Copyright (C) 2002-2017   ProcessOne
 --
 -- This program is free software; you can redistribute it and/or
 -- modify it under the terms of the GNU General Public License as
@@ -19,12 +19,15 @@
 CREATE TABLE users (
     username varchar(191) PRIMARY KEY,
     password text NOT NULL,
+    serverkey varchar(64) NOT NULL DEFAULT '',
+    salt varchar(64) NOT NULL DEFAULT '',
+    iterationcount integer NOT NULL DEFAULT 0,
     created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
--- To support SCRAM auth:
--- ALTER TABLE users ADD COLUMN serverkey text NOT NULL DEFAULT '';
--- ALTER TABLE users ADD COLUMN salt text NOT NULL DEFAULT '';
+-- Add support for SCRAM auth to a database created before ejabberd 16.03:
+-- ALTER TABLE users ADD COLUMN serverkey varchar(64) NOT NULL DEFAULT '';
+-- ALTER TABLE users ADD COLUMN salt varchar(64) NOT NULL DEFAULT '';
 -- ALTER TABLE users ADD COLUMN iterationcount integer NOT NULL DEFAULT 0;
 
 CREATE TABLE last (
@@ -272,7 +275,7 @@ CREATE UNIQUE INDEX i_pubsub_subscription_opt ON pubsub_subscription_opt(subid(3
 CREATE TABLE muc_room (
     name text NOT NULL,
     host text NOT NULL,
-    opts text NOT NULL,
+    opts mediumtext NOT NULL,
     created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -325,3 +328,10 @@ CREATE TABLE sm (
 CREATE UNIQUE INDEX i_sid ON sm(usec, pid(75));
 CREATE INDEX i_node ON sm(node(75));
 CREATE INDEX i_username ON sm(username);
+
+CREATE TABLE oauth_token (
+    token varchar(191) NOT NULL PRIMARY KEY,
+    jid text NOT NULL,
+    scope text NOT NULL,
+    expire bigint NOT NULL
+) ENGINE=InnoDB CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;

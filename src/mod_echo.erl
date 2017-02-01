@@ -5,7 +5,7 @@
 %%% Created : 15 Jan 2003 by Alexey Shchepin <alexey@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2016   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -37,12 +37,12 @@
 
 -export([init/1, handle_call/3, handle_cast/2,
 	 handle_info/2, terminate/2, code_change/3,
-	 mod_opt_type/1]).
+	 mod_opt_type/1, depends/2]).
 
 -include("ejabberd.hrl").
 -include("logger.hrl").
 
--include("jlib.hrl").
+-include("xmpp.hrl").
 
 -record(state, {host = <<"">> :: binary()}).
 
@@ -63,7 +63,7 @@ start_link(Host, Opts) ->
 start(Host, Opts) ->
     Proc = gen_mod:get_module_proc(Host, ?PROCNAME),
     ChildSpec = {Proc, {?MODULE, start_link, [Host, Opts]},
-		 temporary, 1000, worker, [?MODULE]},
+		 transient, 1000, worker, [?MODULE]},
     supervisor:start_child(ejabberd_sup, ChildSpec).
 
 stop(Host) ->
@@ -86,7 +86,7 @@ stop(Host) ->
 init([Host, Opts]) ->
     MyHost = gen_mod:get_opt_host(Host, Opts,
 				  <<"echo.@HOST@">>),
-    ejabberd_router:register_route(MyHost),
+    ejabberd_router:register_route(MyHost, Host),
     {ok, #state{host = MyHost}}.
 
 %%--------------------------------------------------------------------
@@ -118,7 +118,10 @@ handle_cast(_Msg, State) -> {noreply, State}.
 handle_info({route, From, To, Packet}, State) ->
     Packet2 = case From#jid.user of
 		<<"">> ->
-		    jlib:make_error_reply(Packet, ?ERR_BAD_REQUEST);
+		    Lang = xmpp:get_lang(Packet),
+		    Txt = <<"User part of JID in 'from' is empty">>,
+		    xmpp:make_error(
+		      Packet, xmpp:err_bad_request(Txt, Lang));
 		_ -> Packet
 	      end,
     do_client_version(disabled, To, From),
@@ -165,37 +168,30 @@ code_change(_OldVsn, State, _Extra) -> {ok, State}.
 %% using exactly the same JID. We add a (mostly) random resource to
 %% try to guarantee that the received response matches the request sent.
 %% Finally, the received response is printed in the ejabberd log file.
+
+%% THIS IS **NOT** HOW TO WRITE ejabberd CODE. THIS CODE IS RETARDED.
+
 do_client_version(disabled, _From, _To) -> ok;
 do_client_version(enabled, From, To) ->
-    ToS = jid:to_string(To),
-    Random_resource =
-	iolist_to_binary(integer_to_list(random:uniform(100000))),
+    Random_resource = randoms:get_string(),
     From2 = From#jid{resource = Random_resource,
 		     lresource = Random_resource},
-    Packet = #xmlel{name = <<"iq">>,
-		    attrs = [{<<"to">>, ToS}, {<<"type">>, <<"get">>}],
-		    children =
-			[#xmlel{name = <<"query">>,
-				attrs = [{<<"xmlns">>, ?NS_VERSION}],
-				children = []}]},
+    ID = randoms:get_string(),
+    Packet = #iq{from = From, to = To, type = get,
+		 id = randoms:get_string(),
+		 sub_els = [#version{}]},
     ejabberd_router:route(From2, To, Packet),
-    Els = receive
-	    {route, To, From2, IQ} ->
-		#xmlel{name = <<"query">>, children = List} =
-		    fxml:get_subtag(IQ, <<"query">>),
-		List
-	    after 5000 -> % Timeout in miliseconds: 5 seconds
-		      []
-	  end,
-    Values = [{Name, Value}
-	      || #xmlel{name = Name, attrs = [],
-			children = [{xmlcdata, Value}]}
-		     <- Els],
-    Values_string1 = [io_lib:format("~n~s: ~p", [N, V])
-		      || {N, V} <- Values],
-    Values_string2 = iolist_to_binary(Values_string1),
-    ?INFO_MSG("Information of the client: ~s~s",
-	      [ToS, Values_string2]).
+    receive
+	{route, To, From2,
+	 #iq{id = ID, type = result, sub_els = [#version{} = V]}} ->
+	    ?INFO_MSG("Version of the client ~s:~n~s",
+		      [jid:to_string(To), xmpp:pp(V)])
+    after 5000 -> % Timeout in miliseconds: 5 seconds
+	    []
+    end.
+
+depends(_Host, _Opts) ->
+    [].
 
 mod_opt_type(host) -> fun iolist_to_binary/1;
 mod_opt_type(_) -> [host].

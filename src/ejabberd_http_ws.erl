@@ -5,7 +5,7 @@
 %%% Created : 09-10-2010 by Eric Cestari <ecestari@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2016   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -39,7 +39,7 @@
 -include("ejabberd.hrl").
 -include("logger.hrl").
 
--include("jlib.hrl").
+-include("xmpp.hrl").
 
 -include("ejabberd_http.hrl").
 
@@ -112,14 +112,15 @@ socket_handoff(LocalPath, Request, Socket, SockMod, Buf, Opts) ->
 %%% Internal
 
 init([{#ws{ip = IP, http_opts = HOpts}, _} = WS]) ->
-    SOpts = lists:filtermap(fun({stream_managment, _}) -> true;
+    SOpts = lists:filtermap(fun({stream_management, _}) -> true;
                                ({max_ack_queue, _}) -> true;
+                               ({ack_timeout, _}) -> true;
                                ({resume_timeout, _}) -> true;
                                ({max_resume_timeout, _}) -> true;
                                ({resend_on_timeout, _}) -> true;
                                (_) -> false
                             end, HOpts),
-    Opts = [{xml_socket, true} | ejabberd_c2s_config:get_c2s_limits() ++ SOpts],
+    Opts = ejabberd_c2s_config:get_c2s_limits() ++ SOpts,
     PingInterval = ejabberd_config:get_option(
                      {websocket_ping_interval, ?MYNAME},
                      fun(I) when is_integer(I), I>=0 -> I end,

@@ -5,7 +5,7 @@
 %%% Created : 12 Oct 2006 by Evgeniy Khramtsov <xram@jabber.ru>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2016   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -39,9 +39,15 @@
 %% supervisor callbacks.
 -export([init/1]).
 
--export([start_link/2, mod_opt_type/1]).
+-export([start_link/2, mod_opt_type/1, depends/2]).
 
 -define(PROCNAME, ejabberd_mod_proxy65).
+
+-callback init() -> any().
+-callback register_stream(binary(), pid()) -> ok | {error, any()}.
+-callback unregister_stream(binary()) -> ok | {error, any()}.
+-callback activate_stream(binary(), binary(), pos_integer() | infinity, node()) ->
+    ok | {error, limit | conflict | notfound | term()}.
 
 start(Host, Opts) ->
     case mod_proxy65_service:add_listener(Host, Opts) of
@@ -50,7 +56,12 @@ start(Host, Opts) ->
 	  Proc = gen_mod:get_module_proc(Host, ?PROCNAME),
 	  ChildSpec = {Proc, {?MODULE, start_link, [Host, Opts]},
 		       transient, infinity, supervisor, [?MODULE]},
-	  supervisor:start_child(ejabberd_sup, ChildSpec)
+	  case supervisor:start_child(ejabberd_sup, ChildSpec) of
+	      {error, _} = Err -> erlang:error(Err);
+	      _ ->
+		  Mod = gen_mod:ram_db_mod(global, ?MODULE),
+		  Mod:init()
+	  end
     end.
 
 stop(Host) ->
@@ -77,12 +88,12 @@ init([Host, Opts]) ->
 						  ejabberd_mod_proxy65_sup),
 			  mod_proxy65_stream]},
 			transient, infinity, supervisor, [ejabberd_tmp_sup]},
-    StreamManager = {mod_proxy65_sm,
-		     {mod_proxy65_sm, start_link, [Host, Opts]}, transient,
-		     5000, worker, [mod_proxy65_sm]},
     {ok,
      {{one_for_one, 10, 1},
-      [StreamManager, StreamSupervisor, Service]}}.
+      [StreamSupervisor, Service]}}.
+
+depends(_Host, _Opts) ->
+    [].
 
 mod_opt_type(auth_type) ->
     fun (plain) -> plain;
@@ -90,12 +101,10 @@ mod_opt_type(auth_type) ->
     end;
 mod_opt_type(recbuf) ->
     fun (I) when is_integer(I), I > 0 -> I end;
-mod_opt_type(shaper) ->
-    fun (A) when is_atom(A) -> A end;
+mod_opt_type(shaper) -> fun acl:shaper_rules_validator/1;
 mod_opt_type(sndbuf) ->
     fun (I) when is_integer(I), I > 0 -> I end;
-mod_opt_type(access) ->
-    fun (A) when is_atom(A) -> A end;
+mod_opt_type(access) -> fun acl:access_rules_validator/1;
 mod_opt_type(host) -> fun iolist_to_binary/1;
 mod_opt_type(hostname) -> fun iolist_to_binary/1;
 mod_opt_type(ip) ->
@@ -111,7 +120,9 @@ mod_opt_type(max_connections) ->
     fun (I) when is_integer(I), I > 0 -> I;
 	(infinity) -> infinity
     end;
+mod_opt_type(ram_db_type) ->
+    fun(T) -> ejabberd_config:v_db(?MODULE, T) end;
 mod_opt_type(_) ->
     [auth_type, recbuf, shaper, sndbuf,
      access, host, hostname, ip, name, port,
-     max_connections].
+     max_connections, ram_db_type].

@@ -5,7 +5,7 @@
 %%% Created :  9 Feb 2003 by Alexey Shchepin <alexey@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2016   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -50,7 +50,7 @@
 -spec start() -> ok.
 
 start() ->
-    mnesia:create_table(shaper,
+    ejabberd_mnesia:create(?MODULE, shaper,
                         [{ram_copies, [node()]},
                          {local_content, true},
 			 {attributes, record_info(fields, shaper)}]),
@@ -124,9 +124,13 @@ update(#maxrate{} = State, Size) ->
 	       true -> 0
 	    end,
     NextNow = p1_time_compat:system_time(micro_seconds) + Pause * 1000,
+    Div = case NextNow - State#maxrate.lasttime of
+        0 -> 1;
+        V -> V
+    end,
     {State#maxrate{lastrate =
 		       (State#maxrate.lastrate +
-			  1000000 * Size / (NextNow - State#maxrate.lasttime))
+			  1000000 * Size / Div)
 			 / 2,
 		   lasttime = NextNow},
      Pause}.

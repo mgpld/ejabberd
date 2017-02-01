@@ -5,7 +5,7 @@
 %%% Created : 12 Mar 2006 by Alexey Shchepin <alexey@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2016   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -41,13 +41,12 @@
 
 -export([init/1, handle_call/3, handle_cast/2,
 	 handle_info/2, terminate/2, code_change/3,
-	 mod_opt_type/1, opt_type/1]).
+	 mod_opt_type/1, opt_type/1, depends/2]).
 
 -include("ejabberd.hrl").
 -include("logger.hrl").
 
--include("jlib.hrl").
--include("mod_muc.hrl").
+-include("xmpp.hrl").
 -include("mod_muc_room.hrl").
 
 -define(T(Text), translate:translate(Lang, Text)).
@@ -81,7 +80,7 @@ start_link(Host, Opts) ->
 start(Host, Opts) ->
     Proc = gen_mod:get_module_proc(Host, ?PROCNAME),
     ChildSpec = {Proc, {?MODULE, start_link, [Host, Opts]},
-		 temporary, 1000, worker, [?MODULE]},
+		 transient, 1000, worker, [?MODULE]},
     supervisor:start_child(ejabberd_sup, ChildSpec).
 
 stop(Host) ->
@@ -108,6 +107,9 @@ transform_module_options(Opts) ->
          (Opt) ->
               Opt
       end, Opts).
+
+depends(_Host, _Opts) ->
+    [{mod_muc, hard}].
 
 %%====================================================================
 %% gen_server callbacks
@@ -141,7 +143,7 @@ init([Host, Opts]) ->
                               fun iolist_to_binary/1,
                               false),
     AccessLog = gen_mod:get_opt(access_log, Opts,
-                                fun(A) when is_atom(A) -> A end,
+                                fun acl:access_rules_validator/1,
                                 muc_admin),
     Timezone = gen_mod:get_opt(timezone, Opts,
                                fun(local) -> local;
@@ -193,15 +195,13 @@ code_change(_OldVsn, State, _Extra) -> {ok, State}.
 add_to_log2(text, {Nick, Packet}, Room, Opts, State) ->
     case has_no_permanent_store_hint(Packet) of
 	false ->
-	    case {fxml:get_subtag(Packet, <<"subject">>),
-		    fxml:get_subtag(Packet, <<"body">>)}
-	    of
-		{false, false} -> ok;
-		{false, SubEl} ->
-		    Message = {body, fxml:get_tag_cdata(SubEl)},
+	    case {Packet#message.subject, Packet#message.body} of
+		{[], []} -> ok;
+		{[], Body} ->
+		    Message = {body, xmpp:get_text(Body)},
 		    add_message_to_log(Nick, Message, Room, Opts, State);
-		{SubEl, _} ->
-		    Message = {subject, fxml:get_tag_cdata(SubEl)},
+		{Subj, _} ->
+		    Message = {subject, xmpp:get_text(Subj)},
 		    add_message_to_log(Nick, Message, Room, Opts, State)
 	    end;
 	true -> ok
@@ -246,18 +246,18 @@ build_filename_string(TimeStamp, OutDir, RoomJID,
     {Dir, Filename, Rel} = case DirType of
 			     subdirs ->
 				 SYear =
-				     iolist_to_binary(io_lib:format("~4..0w",
+				     (str:format("~4..0w",
 								    [Year])),
 				 SMonth =
-				     iolist_to_binary(io_lib:format("~2..0w",
+				     (str:format("~2..0w",
 								    [Month])),
-				 SDay = iolist_to_binary(io_lib:format("~2..0w",
+				 SDay = (str:format("~2..0w",
 								       [Day])),
 				 {fjoin([SYear, SMonth]), SDay,
 				  <<"../..">>};
 			     plain ->
 				 Date =
-				     iolist_to_binary(io_lib:format("~4..0w-~2..0w-~2..0w",
+				     (str:format("~4..0w-~2..0w-~2..0w",
 								    [Year,
 								     Month,
 								     Day])),
@@ -726,7 +726,7 @@ fw(F, S, FileFormat) when is_atom(FileFormat) ->
     fw(F, S, [], FileFormat).
 
 fw(F, S, O, FileFormat) ->
-    S1 = list_to_binary(io_lib:format(binary_to_list(S) ++ "~n", O)),
+    S1 = (str:format(binary_to_list(S) ++ "~n", O)),
     S2 = case FileFormat of
 	     html ->
 		 S1;
@@ -1032,7 +1032,7 @@ roomconfig_to_string(Options, Lang, FileFormat) ->
 					   max_users ->
 					       <<"<div class=\"rcot\">",
 						 OptText/binary, ": \"",
-						 (htmlize(jlib:integer_to_binary(T),
+						 (htmlize(integer_to_binary(T),
 							  FileFormat))/binary,
 						 "\"</div>">>;
 					   title ->
@@ -1050,7 +1050,7 @@ roomconfig_to_string(Options, Lang, FileFormat) ->
 					   allow_private_messages_from_visitors ->
 					       <<"<div class=\"rcot\">",
 						 OptText/binary, ": \"",
-						 (htmlize(?T((jlib:atom_to_binary(T))),
+						 (htmlize(?T(jlib:atom_to_binary(T)),
 							  FileFormat))/binary,
 						 "\"</div>">>;
 					   _ -> <<"\"", T/binary, "\"">>
@@ -1165,19 +1165,17 @@ get_room_occupants(RoomJIDString) ->
     [{U#user.jid, U#user.nick, U#user.role}
      || {_, U} <- (?DICT):to_list(StateData#state.users)].
 
--spec get_room_state(binary(), binary()) -> muc_room_state().
+-spec get_room_state(binary(), binary()) -> mod_muc_room:state().
 
 get_room_state(RoomName, MucService) ->
-    case mnesia:dirty_read(muc_online_room,
-			   {RoomName, MucService})
-	of
-      [R] ->
-	  RoomPid = R#muc_online_room.pid,
+    case mod_muc:find_online_room(RoomName, MucService) of
+	{ok, RoomPid} ->
 	  get_room_state(RoomPid);
-      [] -> #state{}
+	error ->
+	    #state{}
     end.
 
--spec get_room_state(pid()) -> muc_room_state().
+-spec get_room_state(pid()) -> mod_muc_room:state().
 
 get_room_state(RoomPid) ->
     {ok, R} = gen_fsm:sync_send_all_state_event(RoomPid,
@@ -1201,14 +1199,10 @@ fjoin(FileList) ->
     list_to_binary(filename:join([binary_to_list(File) || File <- FileList])).
 
 has_no_permanent_store_hint(Packet) ->
-    fxml:get_subtag_with_xmlns(Packet, <<"no-store">>, ?NS_HINTS)
-      =/= false orelse
-    fxml:get_subtag_with_xmlns(Packet, <<"no-storage">>, ?NS_HINTS)
-      =/= false orelse
-    fxml:get_subtag_with_xmlns(Packet, <<"no-permanent-store">>, ?NS_HINTS)
-      =/= false orelse
-    fxml:get_subtag_with_xmlns(Packet, <<"no-permanent-storage">>, ?NS_HINTS)
-      =/= false.
+    xmpp:has_subtag(Packet, #hint{type = 'no-store'}) orelse
+    xmpp:has_subtag(Packet, #hint{type = 'no-storage'}) orelse
+    xmpp:has_subtag(Packet, #hint{type = 'no-permanent-store'}) orelse
+    xmpp:has_subtag(Packet, #hint{type = 'no-permanent-storage'}).
 
 mod_opt_type(access_log) ->
     fun (A) when is_atom(A) -> A end;

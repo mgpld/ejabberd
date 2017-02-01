@@ -5,7 +5,7 @@
 %%% Created : 15 Oct 2015 by Holger Weiss <holger@zedat.fu-berlin.de>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2015-2016   ProcessOne
+%%% ejabberd, Copyright (C) 2015-2017   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -39,6 +39,7 @@
 -export([start_link/3,
 	 start/2,
 	 stop/1,
+	 depends/2,
 	 mod_opt_type/1]).
 
 %% gen_server callbacks.
@@ -52,7 +53,7 @@
 %% ejabberd_hooks callback.
 -export([handle_slot_request/5]).
 
--include("jlib.hrl").
+-include("jid.hrl").
 -include("logger.hrl").
 -include_lib("kernel/include/file.hrl").
 
@@ -99,15 +100,20 @@ stop(ServerHost) ->
 -spec mod_opt_type(atom()) -> fun((term()) -> term()) | [atom()].
 
 mod_opt_type(access_soft_quota) ->
-    fun(A) when is_atom(A) -> A end;
+    fun acl:shaper_rules_validator/1;
 mod_opt_type(access_hard_quota) ->
-    fun(A) when is_atom(A) -> A end;
+    fun acl:shaper_rules_validator/1;
 mod_opt_type(max_days) ->
     fun(I) when is_integer(I), I > 0 -> I;
        (infinity) -> infinity
     end;
 mod_opt_type(_) ->
     [access_soft_quota, access_hard_quota, max_days].
+
+-spec depends(binary(), gen_mod:opts()) -> [{module(), hard | soft}].
+
+depends(_Host, _Opts) ->
+    [{mod_http_upload, hard}].
 
 %%--------------------------------------------------------------------
 %% gen_server callbacks.
@@ -118,10 +124,10 @@ mod_opt_type(_) ->
 init({ServerHost, Opts}) ->
     process_flag(trap_exit, true),
     AccessSoftQuota = gen_mod:get_opt(access_soft_quota, Opts,
-				      fun(A) when is_atom(A) -> A end,
+				      fun acl:shaper_rules_validator/1,
 				      soft_upload_quota),
     AccessHardQuota = gen_mod:get_opt(access_hard_quota, Opts,
-				      fun(A) when is_atom(A) -> A end,
+				      fun acl:shaper_rules_validator/1,
 				      hard_upload_quota),
     MaxDays = gen_mod:get_opt(max_days, Opts,
 			      fun(I) when is_integer(I), I > 0 -> I;
@@ -132,6 +138,7 @@ init({ServerHost, Opts}) ->
 				      fun iolist_to_binary/1,
 				      <<"@HOME@/upload">>),
     DocRoot2 = mod_http_upload:expand_home(str:strip(DocRoot1, right, $/)),
+    DocRoot3 = mod_http_upload:expand_host(DocRoot2, ServerHost),
     Timers = if MaxDays == infinity -> [];
 		true ->
 		     {ok, T1} = timer:send_after(?INITIAL_TIMEOUT, sweep),
@@ -144,7 +151,7 @@ init({ServerHost, Opts}) ->
 		access_soft_quota = AccessSoftQuota,
 		access_hard_quota = AccessHardQuota,
 		max_days = MaxDays,
-		docroot = DocRoot2,
+		docroot = DocRoot3,
 		timers = Timers}}.
 
 -spec handle_call(_, {pid(), _}, state()) -> {noreply, state()}.
@@ -238,13 +245,13 @@ handle_info(Info, State) ->
     ?ERROR_MSG("Got unexpected info: ~p", [Info]),
     {noreply, State}.
 
--spec terminate(normal | shutdown | {shutdown, _} | _, _) -> ok.
+-spec terminate(normal | shutdown | {shutdown, _} | _, state()) -> ok.
 
 terminate(Reason, #state{server_host = ServerHost, timers = Timers}) ->
     ?DEBUG("Stopping upload quota process for ~s: ~p", [ServerHost, Reason]),
     ejabberd_hooks:delete(http_upload_slot_request, ServerHost, ?MODULE,
 			  handle_slot_request, 50),
-    lists:foreach(fun(Timer) -> timer:cancel(Timer) end, Timers).
+    lists:foreach(fun timer:cancel/1, Timers).
 
 -spec code_change({down, _} | _, state(), _) -> {ok, state()}.
 
@@ -256,8 +263,8 @@ code_change(_OldVsn, #state{server_host = ServerHost} = State, _Extra) ->
 %% ejabberd_hooks callback.
 %%--------------------------------------------------------------------
 
--spec handle_slot_request(term(), jid(), binary(), non_neg_integer(), binary())
-      -> term().
+-spec handle_slot_request(allow | deny, jid(), binary(),
+			  non_neg_integer(), binary()) -> allow | deny.
 
 handle_slot_request(allow, #jid{lserver = ServerHost} = JID, Path, Size,
 		    _Lang) ->
@@ -292,7 +299,7 @@ enforce_quota(UserDir, SlotSize, _OldSize, MinSize, MaxSize) ->
 			    {[Path | AccFiles], AccSize + Size, NewSize}
 		    end, {[], 0, 0}, Files),
     if OldSize + SlotSize > MaxSize ->
-	    lists:foreach(fun(File) -> del_file_and_dir(File) end, DelFiles),
+	    lists:foreach(fun del_file_and_dir/1, DelFiles),
 	    file:del_dir(UserDir), % In case it's empty, now.
 	    NewSize + SlotSize;
        true ->
@@ -307,7 +314,7 @@ delete_old_files(UserDir, CutOff) ->
 	[] ->
 	    ok;
 	OldFiles ->
-	    lists:foreach(fun(File) -> del_file_and_dir(File) end, OldFiles),
+	    lists:foreach(fun del_file_and_dir/1, OldFiles),
 	    file:del_dir(UserDir) % In case it's empty, now.
     end.
 

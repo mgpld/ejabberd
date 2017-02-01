@@ -5,7 +5,7 @@
 %%% Created : 11 Jul 2009 by Brian Cully <bjc@kublai.com>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2016   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -36,15 +36,13 @@
 -include("ejabberd.hrl").
 -include("logger.hrl").
 
--include("jlib.hrl").
+-include("xmpp.hrl").
 
 -define(SUPERVISOR, ejabberd_sup).
 
 -define(DEFAULT_SEND_PINGS, false).
 
 -define(DEFAULT_PING_INTERVAL, 60).
-
--define(DICT, dict).
 
 %% API
 -export([start_link/2, start_ping/2, stop_ping/2]).
@@ -56,8 +54,8 @@
 -export([init/1, terminate/2, handle_call/3,
 	 handle_cast/2, handle_info/2, code_change/3]).
 
--export([iq_ping/3, user_online/3, user_offline/3,
-	 user_send/4, mod_opt_type/1]).
+-export([iq_ping/1, user_online/3, user_offline/3,
+	 user_send/1, mod_opt_type/1, depends/2]).
 
 -record(state,
 	{host = <<"">>,
@@ -65,7 +63,7 @@
 	 ping_interval = ?DEFAULT_PING_INTERVAL :: non_neg_integer(),
 	 ping_ack_timeout = undefined :: non_neg_integer(),
 	 timeout_action = none :: none | kill,
-         timers = (?DICT):new() :: ?TDICT}).
+         timers = maps:new() :: map()}).
 
 %%====================================================================
 %% API
@@ -75,10 +73,12 @@ start_link(Host, Opts) ->
     gen_server:start_link({local, Proc}, ?MODULE,
 			  [Host, Opts], []).
 
+-spec start_ping(binary(), jid()) -> ok.
 start_ping(Host, JID) ->
     Proc = gen_mod:get_module_proc(Host, ?MODULE),
     gen_server:cast(Proc, {start_ping, JID}).
 
+-spec stop_ping(binary(), jid()) -> ok.
 stop_ping(Host, JID) ->
     Proc = gen_mod:get_module_proc(Host, ?MODULE),
     gen_server:cast(Proc, {stop_ping, JID}).
@@ -116,7 +116,6 @@ init([Host, Opts]) ->
                                     end, none),
     IQDisc = gen_mod:get_opt(iqdisc, Opts, fun gen_iq_handler:check_type/1,
                              no_queue),
-    mod_disco:register_feature(Host, ?NS_PING),
     gen_iq_handler:add_iq_handler(ejabberd_sm, Host,
 				  ?NS_PING, ?MODULE, iq_ping, IQDisc),
     gen_iq_handler:add_iq_handler(ejabberd_local, Host,
@@ -136,7 +135,7 @@ init([Host, Opts]) ->
 	    ping_interval = PingInterval,
 	    timeout_action = TimeoutAction,
 	    ping_ack_timeout = PingAckTimeout,
-	    timers = (?DICT):new()}}.
+	    timers = maps:new()}}.
 
 terminate(_Reason, #state{host = Host}) ->
     ejabberd_hooks:delete(sm_remove_connection_hook, Host,
@@ -148,8 +147,7 @@ terminate(_Reason, #state{host = Host}) ->
     gen_iq_handler:remove_iq_handler(ejabberd_local, Host,
 				     ?NS_PING),
     gen_iq_handler:remove_iq_handler(ejabberd_sm, Host,
-				     ?NS_PING),
-    mod_disco:unregister_feature(Host, ?NS_PING).
+				     ?NS_PING).
 
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State};
@@ -183,10 +181,7 @@ handle_cast({iq_pong, JID, timeout}, State) ->
 handle_cast(_Msg, State) -> {noreply, State}.
 
 handle_info({timeout, _TRef, {ping, JID}}, State) ->
-    IQ = #iq{type = get,
-	     sub_el =
-		 [#xmlel{name = <<"ping">>,
-			 attrs = [{<<"xmlns">>, ?NS_PING}], children = []}]},
+    IQ = #iq{type = get, sub_els = [#ping{}]},
     Pid = self(),
     F = fun (Response) ->
 		gen_server:cast(Pid, {iq_pong, JID, Response})
@@ -203,54 +198,62 @@ code_change(_OldVsn, State, _Extra) -> {ok, State}.
 %%====================================================================
 %% Hook callbacks
 %%====================================================================
-iq_ping(_From, _To,
-	#iq{type = Type, sub_el = SubEl} = IQ) ->
-    case {Type, SubEl} of
-      {get, #xmlel{name = <<"ping">>}} ->
-	  IQ#iq{type = result, sub_el = []};
-      _ ->
-	  IQ#iq{type = error,
-		sub_el = [SubEl, ?ERR_FEATURE_NOT_IMPLEMENTED]}
-    end.
+-spec iq_ping(iq()) -> iq().
+iq_ping(#iq{type = get, sub_els = [#ping{}]} = IQ) ->
+    xmpp:make_iq_result(IQ);
+iq_ping(#iq{lang = Lang} = IQ) ->
+    Txt = <<"Ping query is incorrect">>,
+    xmpp:make_error(IQ, xmpp:err_bad_request(Txt, Lang)).
 
+-spec user_online(ejabberd_sm:sid(), jid(), ejabberd_sm:info()) -> ok.
 user_online(_SID, JID, _Info) ->
     start_ping(JID#jid.lserver, JID).
 
+-spec user_offline(ejabberd_sm:sid(), jid(), ejabberd_sm:info()) -> ok.
 user_offline(_SID, JID, _Info) ->
     stop_ping(JID#jid.lserver, JID).
 
-user_send(Packet, _C2SState, JID, _From) ->
+-spec user_send({stanza(), ejabberd_c2s:state()}) -> {stanza(), ejabberd_c2s:state()}.
+user_send({Packet, #{jid := JID} = C2SState}) ->
     start_ping(JID#jid.lserver, JID),
-    Packet.
+    {Packet, C2SState}.
 
 %%====================================================================
 %% Internal functions
 %%====================================================================
+-spec add_timer(jid(), non_neg_integer(), map()) -> map().
 add_timer(JID, Interval, Timers) ->
     LJID = jid:tolower(JID),
-    NewTimers = case (?DICT):find(LJID, Timers) of
-		  {ok, OldTRef} ->
-		      cancel_timer(OldTRef), (?DICT):erase(LJID, Timers);
-		  _ -> Timers
+    NewTimers = case maps:find(LJID, Timers) of
+      {ok, OldTRef} ->
+		      cancel_timer(OldTRef),
+          maps:remove(LJID, Timers);
+      _ -> Timers
 		end,
     TRef = erlang:start_timer(Interval * 1000, self(),
 			      {ping, JID}),
-    (?DICT):store(LJID, TRef, NewTimers).
+    maps:put(LJID, TRef, NewTimers).
 
+-spec del_timer(jid(), map()) -> map().
 del_timer(JID, Timers) ->
     LJID = jid:tolower(JID),
-    case (?DICT):find(LJID, Timers) of
+    case maps:find(LJID, Timers) of
       {ok, TRef} ->
-	  cancel_timer(TRef), (?DICT):erase(LJID, Timers);
+	  cancel_timer(TRef),
+    maps:remove(LJID, Timers);
       _ -> Timers
     end.
 
+-spec cancel_timer(reference()) -> ok.
 cancel_timer(TRef) ->
     case erlang:cancel_timer(TRef) of
       false ->
 	  receive {timeout, TRef, _} -> ok after 0 -> ok end;
       _ -> ok
     end.
+
+depends(_Host, _Opts) ->
+    [].
 
 mod_opt_type(iqdisc) -> fun gen_iq_handler:check_type/1;
 mod_opt_type(ping_interval) ->

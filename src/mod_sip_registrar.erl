@@ -1,12 +1,11 @@
 %%%-------------------------------------------------------------------
-%%% @author Evgeny Khramtsov <ekhramtsov@process-one.net>
-%%% @doc
-%%%
-%%% @end
+%%% File    : mod_sip_registrar.erl
+%%% Author  : Evgeny Khramtsov <ekhramtsov@process-one.net>
+%%% Purpose : 
 %%% Created : 23 Apr 2014 by Evgeny Khramtsov <ekhramtsov@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2014-2016   ProcessOne
+%%% ejabberd, Copyright (C) 2014-2017   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -179,13 +178,11 @@ ping(SIPSocket) ->
 %%%===================================================================
 init([]) ->
     update_table(),
-    mnesia:create_table(sip_session,
+    ejabberd_mnesia:create(?MODULE, sip_session,
 			[{ram_copies, [node()]},
 			 {type, bag},
-			 {attributes, record_info(fields, sip_session)}]),
-    mnesia:add_table_index(sip_session, conn_mref),
-    mnesia:add_table_index(sip_session, socket),
-    mnesia:add_table_copy(sip_session, node(), ram_copies),
+			 {attributes, record_info(fields, sip_session)},
+			 {index, [conn_mref,socket]}]),
     {ok, #state{}}.
 
 handle_call({write, Sessions, Supported}, _From, State) ->
@@ -355,7 +352,7 @@ min_expires() ->
     60.
 
 to_integer(Bin, Min, Max) ->
-    case catch list_to_integer(binary_to_list(Bin)) of
+    case catch (binary_to_integer(Bin)) of
         N when N >= Min, N =< Max ->
             {ok, N};
         _ ->

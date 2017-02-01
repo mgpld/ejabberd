@@ -5,7 +5,7 @@
 %%% Created :  1 Dec 2007 by Christophe Romain <christophe.romain@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2016   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -40,7 +40,7 @@
 -include_lib("stdlib/include/qlc.hrl").
 
 -include("pubsub.hrl").
--include("jlib.hrl").
+-include("xmpp.hrl").
 
 -export([init/3, terminate/2, options/0, set_node/1,
     get_node/3, get_node/2, get_node/1, get_nodes/2,
@@ -49,15 +49,10 @@
     delete_node/2]).
 
 init(_Host, _ServerHost, _Options) ->
-    mnesia:create_table(pubsub_node,
+    ejabberd_mnesia:create(?MODULE, pubsub_node,
 	[{disc_copies, [node()]},
-	    {attributes, record_info(fields, pubsub_node)}]),
-    mnesia:add_table_index(pubsub_node, id),
-    NodesFields = record_info(fields, pubsub_node),
-    case mnesia:table_info(pubsub_node, attributes) of
-	NodesFields -> ok;
-	_ -> ok
-    end,
+	    {attributes, record_info(fields, pubsub_node)},
+	    {index, [id]}]),
     %% mnesia:transform_table(pubsub_state, ignore, StatesFields)
     ok.
 
@@ -74,15 +69,15 @@ get_node(Host, Node, _From) ->
     get_node(Host, Node).
 
 get_node(Host, Node) ->
-    case catch mnesia:read({pubsub_node, {Host, Node}}) of
+    case mnesia:read({pubsub_node, {Host, Node}}) of
 	[Record] when is_record(Record, pubsub_node) -> Record;
-	_ -> {error, ?ERR_ITEM_NOT_FOUND}
+	_ -> {error, xmpp:err_item_not_found(<<"Node not found">>, ?MYLANG)}
     end.
 
 get_node(Nidx) ->
-    case catch mnesia:index_read(pubsub_node, Nidx, #pubsub_node.id) of
+    case mnesia:index_read(pubsub_node, Nidx, #pubsub_node.id) of
 	[Record] when is_record(Record, pubsub_node) -> Record;
-	_ -> {error, ?ERR_ITEM_NOT_FOUND}
+	_ -> {error, xmpp:err_item_not_found(<<"Node not found">>, ?MYLANG)}
     end.
 
 get_nodes(Host, _From) ->
@@ -147,7 +142,7 @@ get_subnodes_tree(Host, Node) ->
 
 create_node(Host, Node, Type, Owner, Options, Parents) ->
     BJID = jid:tolower(jid:remove_resource(Owner)),
-    case catch mnesia:read({pubsub_node, {Host, Node}}) of
+    case mnesia:read({pubsub_node, {Host, Node}}) of
 	[] ->
 	    ParentExists = case Host of
 		{_U, _S, _R} ->
@@ -160,7 +155,7 @@ create_node(Host, Node, Type, Owner, Options, Parents) ->
 			    true;
 			[Parent | _] ->
 			    case catch mnesia:read({pubsub_node, {Host, Parent}}) of
-				[#pubsub_node{owners = [{[], Host, []}]}] ->
+				[#pubsub_node{owners = [{<<>>, Host, <<>>}]}] ->
 				    true;
 				[#pubsub_node{owners = Owners}] ->
 				    lists:member(BJID, Owners);
@@ -180,10 +175,10 @@ create_node(Host, Node, Type, Owner, Options, Parents) ->
 			    options = Options}),
 		    {ok, Nidx};
 		false ->
-		    {error, ?ERR_FORBIDDEN}
+		    {error, xmpp:err_forbidden()}
 	    end;
 	_ ->
-	    {error, ?ERR_CONFLICT}
+	    {error, xmpp:err_conflict(<<"Node already exists">>, ?MYLANG)}
     end.
 
 delete_node(Host, Node) ->

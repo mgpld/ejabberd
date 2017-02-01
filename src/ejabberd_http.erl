@@ -5,7 +5,7 @@
 %%% Created : 27 Feb 2004 by Alexey Shchepin <alexey@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2016   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -39,7 +39,7 @@
 -include("ejabberd.hrl").
 -include("logger.hrl").
 
--include("jlib.hrl").
+-include("xmpp.hrl").
 
 -include("ejabberd_http.hrl").
 
@@ -135,7 +135,7 @@ init({SockMod, Socket}, Opts) ->
               false -> []
             end,
     Bind = case proplists:get_bool(http_bind, Opts) of
-             true -> [{[<<"http-bind">>], mod_http_bind}];
+	     true -> [{[<<"http-bind">>], mod_bosh}];
              false -> []
            end,
     XMLRPC = case proplists:get_bool(xmlrpc, Opts) of
@@ -145,9 +145,19 @@ init({SockMod, Socket}, Opts) ->
     DefinedHandlers = gen_mod:get_opt(
                         request_handlers, Opts,
                         fun(Hs) ->
-                                [{str:tokens(
-                                    iolist_to_binary(Path), <<"/">>),
-                                  Mod} || {Path, Mod} <- Hs]
+                                Hs1 = lists:map(fun
+                                  ({Mod, Path}) when is_atom(Mod) -> {Path, Mod};
+                                  ({Path, Mod}) -> {Path, Mod}
+                                end, Hs),
+
+				Hs2 = [{str:tokens(
+					  iolist_to_binary(Path), <<"/">>),
+					Mod} || {Path, Mod} <- Hs1],
+				[{Path,
+				  case Mod of
+				      mod_http_bind -> mod_bosh;
+				      _ -> Mod
+				  end} || {Path, Mod} <- Hs2]
                         end, []),
     RequestHandlers = DefinedHandlers ++ Captcha ++ Register ++
         Admin ++ Bind ++ XMLRPC,
@@ -252,7 +262,7 @@ process_header(State, Data) ->
 		      request_headers = add_header(Name, Auth, State)};
       {ok,
        {http_header, _, 'Content-Length' = Name, _, SLen}} ->
-	  case catch jlib:binary_to_integer(SLen) of
+	  case catch binary_to_integer(SLen) of
 	    Len when is_integer(Len) ->
 		State#state{request_content_length = Len,
 			    request_headers = add_header(Name, SLen, State)};
@@ -317,7 +327,7 @@ add_header(Name, Value, State)->
 get_host_really_served(undefined, Provided) ->
     Provided;
 get_host_really_served(Default, Provided) ->
-    case lists:member(Provided, ?MYHOSTS) of
+    case ejabberd_router:is_my_host(Provided) of
       true -> Provided;
       false -> Default
     end.
@@ -327,10 +337,10 @@ get_transfer_protocol(SockMod, HostPort) ->
     case {SockMod, PortList} of
       {gen_tcp, []} -> {Host, 80, http};
       {gen_tcp, [Port]} ->
-	  {Host, jlib:binary_to_integer(Port), http};
+	  {Host, binary_to_integer(Port), http};
       {fast_tls, []} -> {Host, 443, https};
       {fast_tls, [Port]} ->
-	  {Host, jlib:binary_to_integer(Port), https}
+	  {Host, binary_to_integer(Port), https}
     end.
 
 %% XXX bard: search through request handlers looking for one that
@@ -391,7 +401,9 @@ extract_path_query(#state{request_method = Method,
 			  socket = _Socket} = State)
     when (Method =:= 'POST' orelse Method =:= 'PUT') andalso
 	   is_integer(Len) ->
-    {NewState, Data} = recv_data(State, Len),
+    case recv_data(State, Len) of
+	error -> {State, false};
+	{NewState, Data} ->
     ?DEBUG("client data: ~p~n", [Data]),
     case catch url_decode_q_split(Path) of
         {'EXIT', _} -> {NewState, false};
@@ -403,6 +415,7 @@ extract_path_query(#state{request_method = Method,
                          LQ -> LQ
                      end,
             {NewState, {LPath, LQuery, Data}}
+	    end
     end;
 extract_path_query(State) ->
     {State, false}.
@@ -520,7 +533,7 @@ recv_data(State, Len, Acc) ->
 		    recv_data(State, Len - byte_size(Data), <<Acc/binary, Data/binary>>);
 		Err ->
 		    ?DEBUG("Cannot receive HTTP data: ~p", [Err]),
-		    <<"">>
+		    error
 	    end;
 	_ ->
 	    Trail = (State#state.trail),
@@ -542,12 +555,12 @@ make_xhtml_output(State, Status, Headers, XHTML) ->
 		   of
 		 {value, _} ->
 		     [{<<"Content-Length">>,
-		       iolist_to_binary(integer_to_list(byte_size(Data)))}
+		       integer_to_binary(byte_size(Data))}
 		      | Headers];
 		 _ ->
 		     [{<<"Content-Type">>, <<"text/html; charset=utf-8">>},
 		      {<<"Content-Length">>,
-		       iolist_to_binary(integer_to_list(byte_size(Data)))}
+		       integer_to_binary(byte_size(Data))}
 		      | Headers]
 	       end,
     HeadersOut = case {State#state.request_version,
@@ -569,7 +582,7 @@ make_xhtml_output(State, Status, Headers, XHTML) ->
 		  end,
 		  HeadersOut),
     SL = [Version,
-	  iolist_to_binary(integer_to_list(Status)), <<" ">>,
+	  integer_to_binary(Status), <<" ">>,
 	  code_to_phrase(Status), <<"\r\n">>],
     Data2 = case State#state.request_method of
 	      'HEAD' -> <<"">>;
@@ -587,12 +600,12 @@ make_text_output(State, Status, Reason, Headers, Text) ->
 		   of
 		 {value, _} ->
 		     [{<<"Content-Length">>,
-		       jlib:integer_to_binary(byte_size(Data))}
+		       integer_to_binary(byte_size(Data))}
 		      | Headers];
 		 _ ->
 		     [{<<"Content-Type">>, <<"text/html; charset=utf-8">>},
 		      {<<"Content-Length">>,
-		       jlib:integer_to_binary(byte_size(Data))}
+		       integer_to_binary(byte_size(Data))}
 		      | Headers]
 	       end,
     HeadersOut = case {State#state.request_version,
@@ -617,7 +630,7 @@ make_text_output(State, Status, Reason, Headers, Text) ->
 		  _ -> Reason
 		end,
     SL = [Version,
-	  jlib:integer_to_binary(Status), <<" ">>,
+	  integer_to_binary(Status), <<" ">>,
 	  NewReason, <<"\r\n">>],
     Data2 = case State#state.request_method of
 	      'HEAD' -> <<"">>;
@@ -753,6 +766,7 @@ code_to_phrase(503) -> <<"Service Unavailable">>;
 code_to_phrase(504) -> <<"Gateway Timeout">>;
 code_to_phrase(505) -> <<"HTTP Version Not Supported">>.
 
+-spec parse_auth(binary()) -> {binary(), binary()} | {oauth, binary(), []} | undefined.
 parse_auth(<<"Basic ", Auth64/binary>>) ->
     Auth = jlib:decode_base64(Auth64),
     %% Auth should be a string with the format: user@server:password
@@ -762,7 +776,8 @@ parse_auth(<<"Basic ", Auth64/binary>>) ->
             undefined;
         Pos ->
             {User, <<$:, Pass/binary>>} = erlang:split_binary(Auth, Pos-1),
-            {User, Pass}
+            PassUtf8 = unicode:characters_to_binary(binary_to_list(Pass), utf8),
+            {User, PassUtf8}
     end;
 parse_auth(<<"Bearer ", SToken/binary>>) ->
     Token = str:strip(SToken),

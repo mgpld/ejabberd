@@ -1,12 +1,11 @@
 %%%-------------------------------------------------------------------
-%%% @author Alexey Shchepin <alexey@process-one.net>
-%%% @doc
-%%% Interface for Riak database
-%%% @end
+%%% File    : ejabberd_riak.erl
+%%% Author  : Alexey Shchepin <alexey@process-one.net>
+%%% Purpose : Interface for Riak database
 %%% Created : 29 Dec 2011 by Alexey Shchepin <alexey@process-one.net>
-%%% @copyright (C) 2002-2016   ProcessOne
 %%%
-%%% ejabberd, Copyright (C) 2002-2016   ProcessOne
+%%%
+%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -28,7 +27,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/4, get_proc/1, make_bucket/1, put/2, put/3,
+-export([start_link/5, get_proc/1, make_bucket/1, put/2, put/3,
          get/2, get/3, get_by_index/4, delete/1, delete/2,
          count_by_index/3, get_by_index_range/5,
          get_keys/1, get_keys_by_index/3, is_connected/0,
@@ -68,12 +67,20 @@
 %%% API
 %%%===================================================================
 %% @private
-start_link(Num, Server, Port, _StartInterval) ->
-    gen_server:start_link({local, get_proc(Num)}, ?MODULE, [Server, Port], []).
+start_link(Num, Server, Port, _StartInterval, Options) ->
+    gen_server:start_link({local, get_proc(Num)}, ?MODULE, [Server, Port, Options], []).
 
 %% @private
 is_connected() ->
-    catch riakc_pb_socket:is_connected(get_random_pid()).
+    lists:all(
+      fun({_Id, Pid, _Type, _Modules}) when is_pid(Pid) ->
+	      case catch riakc_pb_socket:is_connected(get_riak_pid(Pid)) of
+		  true -> true;
+		  _ -> false
+	      end;
+	 (_) ->
+	      false
+      end, supervisor:which_children(ejabberd_riak_sup)).
 
 %% @private
 get_proc(I) ->
@@ -420,7 +427,7 @@ map_key(Obj, _, _) ->
          <<"b_", B/binary>> ->
              B;
          <<"i_", B/binary>> ->
-             list_to_integer(binary_to_list(B));
+             (binary_to_integer(B));
          B ->
              erlang:binary_to_term(B)
      end].
@@ -429,10 +436,8 @@ map_key(Obj, _, _) ->
 %%% gen_server API
 %%%===================================================================
 %% @private
-init([Server, Port]) ->
-    case riakc_pb_socket:start(
-           Server, Port,
-           [auto_reconnect]) of
+init([Server, Port, Options]) ->
+    case riakc_pb_socket:start(Server, Port, Options) of
         {ok, Pid} ->
             erlang:monitor(process, Pid),
             {ok, #state{pid = Pid}};
@@ -477,7 +482,7 @@ encode_index_key(Idx, Key) ->
 encode_key(Bin) when is_binary(Bin) ->
     <<"b_", Bin/binary>>;
 encode_key(Int) when is_integer(Int) ->
-    <<"i_", (list_to_binary(integer_to_list(Int)))/binary>>;
+    <<"i_", ((integer_to_binary(Int)))/binary>>;
 encode_key(Term) ->
     erlang:term_to_binary(Term).
 
@@ -513,10 +518,13 @@ log_error(_, _, _) ->
     ok.
 
 make_invalid_object(Val) ->
-    list_to_binary(io_lib:fwrite("Invalid object: ~p", [Val])).
+    (str:format("Invalid object: ~p", [Val])).
 
 get_random_pid() ->
     PoolPid = ejabberd_riak_sup:get_random_pid(),
+    get_riak_pid(PoolPid).
+
+get_riak_pid(PoolPid) ->
     case catch gen_server:call(PoolPid, get_pid) of
 	{ok, Pid} ->
 	    Pid;

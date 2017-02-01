@@ -5,7 +5,7 @@
 %%% Created : 11 Aug 2007 by Badlop <badlop@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2016   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -35,7 +35,7 @@
 	 unregister_route/1
 	]).
 
--export([start_link/0]).
+-export([start/0, start_link/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -43,9 +43,10 @@
 
 -include("ejabberd.hrl").
 -include("logger.hrl").
--include("jlib.hrl").
+-include("xmpp.hrl").
 
--record(route_multicast, {domain, pid}).
+-record(route_multicast, {domain = <<"">> :: binary() | '_',
+			  pid = self() :: pid()}).
 -record(state, {}).
 
 %%====================================================================
@@ -55,10 +56,15 @@
 %% Function: start_link() -> {ok,Pid} | ignore | {error,Error}
 %% Description: Starts the server
 %%--------------------------------------------------------------------
+start() ->
+    ChildSpec = {?MODULE, {?MODULE, start_link, []},
+		 transient, 1000, worker, [?MODULE]},
+    supervisor:start_child(ejabberd_sup, ChildSpec).
+
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
-
+-spec route_multicast(jid(), binary(), [jid()], stanza()) -> ok.
 route_multicast(From, Domain, Destinations, Packet) ->
     case catch do_route(From, Domain, Destinations, Packet) of
 	{'EXIT', Reason} ->
@@ -68,6 +74,7 @@ route_multicast(From, Domain, Destinations, Packet) ->
 	    ok
     end.
 
+-spec register_route(binary()) -> any().
 register_route(Domain) ->
     case jid:nameprep(Domain) of
 	error ->
@@ -81,6 +88,7 @@ register_route(Domain) ->
 	    mnesia:transaction(F)
     end.
 
+-spec unregister_route(binary()) -> any().
 unregister_route(Domain) ->
     case jid:nameprep(Domain) of
 	error ->
@@ -112,7 +120,7 @@ unregister_route(Domain) ->
 %% Description: Initiates the server
 %%--------------------------------------------------------------------
 init([]) ->
-    mnesia:create_table(route_multicast,
+    ejabberd_mnesia:create(?MODULE, route_multicast,
 			[{ram_copies, [node()]},
 			 {type, bag},
 			 {attributes,
@@ -206,6 +214,7 @@ code_change(_OldVsn, State, _Extra) ->
 %%--------------------------------------------------------------------
 %% From = #jid
 %% Destinations = [#jid]
+-spec do_route(jid(), binary(), [jid()], stanza()) -> any().
 do_route(From, Domain, Destinations, Packet) ->
 
     ?DEBUG("route_multicast~n\tfrom ~s~n\tdomain ~s~n\tdestinations ~p~n\tpacket ~p~n",
@@ -226,6 +235,7 @@ do_route(From, Domain, Destinations, Packet) ->
 	    Pid ! {route_trusted, From, Destinations, Packet}
     end.
 
+-spec pick_multicast_pid([#route_multicast{}]) -> pid().
 pick_multicast_pid(Rs) ->
     List = case [R || R <- Rs, node(R#route_multicast.pid) == node()] of
 	[] -> Rs;
@@ -233,5 +243,6 @@ pick_multicast_pid(Rs) ->
     end,
     (hd(List))#route_multicast.pid.
 
+-spec do_route_normal(jid(), [jid()], stanza()) -> any().
 do_route_normal(From, Destinations, Packet) ->
     [ejabberd_router:route(From, To, Packet) || To <- Destinations].

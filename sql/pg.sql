@@ -1,5 +1,5 @@
 --
--- ejabberd, Copyright (C) 2002-2016   ProcessOne
+-- ejabberd, Copyright (C) 2002-2017   ProcessOne
 --
 -- This program is free software; you can redistribute it and/or
 -- modify it under the terms of the GNU General Public License as
@@ -10,7 +10,7 @@
 -- but WITHOUT ANY WARRANTY; without even the implied warranty of
 -- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
 -- General Public License for more details.
---                         
+--
 -- You should have received a copy of the GNU General Public License along
 -- with this program; if not, write to the Free Software Foundation, Inc.,
 -- 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
@@ -19,10 +19,13 @@
 CREATE TABLE users (
     username text PRIMARY KEY,
     "password" text NOT NULL,
+    serverkey text NOT NULL DEFAULT '',
+    salt text NOT NULL DEFAULT '',
+    iterationcount integer NOT NULL DEFAULT 0,
     created_at TIMESTAMP NOT NULL DEFAULT now()
 );
 
--- To support SCRAM auth:
+-- Add support for SCRAM auth to a database created before ejabberd 16.03:
 -- ALTER TABLE users ADD COLUMN serverkey text NOT NULL DEFAULT '';
 -- ALTER TABLE users ADD COLUMN salt text NOT NULL DEFAULT '';
 -- ALTER TABLE users ADD COLUMN iterationcount integer NOT NULL DEFAULT 0;
@@ -327,3 +330,12 @@ CREATE TABLE sm (
 CREATE UNIQUE INDEX i_sm_sid ON sm USING btree (usec, pid);
 CREATE INDEX i_sm_node ON sm USING btree (node);
 CREATE INDEX i_sm_username ON sm USING btree (username);
+
+CREATE TABLE oauth_token (
+    token text NOT NULL,
+    jid text NOT NULL,
+    scope text NOT NULL,
+    expire bigint NOT NULL
+);
+
+CREATE UNIQUE INDEX i_oauth_token_token ON oauth_token USING btree (token);

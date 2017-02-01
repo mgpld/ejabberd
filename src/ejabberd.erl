@@ -5,7 +5,7 @@
 %%% Created : 16 Nov 2002 by Alexey Shchepin <alexey@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2016   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -79,7 +79,7 @@ is_loaded() ->
 start_app(App, Type, StartFlag) when not is_list(App) ->
     start_app([App], Type, StartFlag);
 start_app([App|Apps], Type, StartFlag) ->
-    case application:start(App) of
+    case application:start(App,Type) of
         ok ->
             spawn(fun() -> check_app_modules(App, StartFlag) end),
             start_app(Apps, Type, StartFlag);
@@ -105,8 +105,6 @@ start_app([], _Type, _StartFlag) ->
     ok.
 
 check_app_modules(App, StartFlag) ->
-    {A, B, C} = p1_time_compat:timestamp(),
-    random:seed(A, B, C),
     sleep(5000),
     case application:get_key(App, modules) of
         {ok, Mods} ->
@@ -140,7 +138,7 @@ exit_or_halt(Reason, StartFlag) ->
     end.
 
 sleep(N) ->
-    timer:sleep(random:uniform(N)).
+    timer:sleep(randoms:uniform(N)).
 
 get_module_file(App, Mod) ->
     BaseName = atom_to_list(Mod),

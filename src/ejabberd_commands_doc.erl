@@ -5,7 +5,7 @@
 %%% Created : 20 May 2008 by Badlop <badlop@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2015   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -41,7 +41,7 @@
 -define(SPAN(N, V), ?TAG_R(span, ??N, V)).
 
 -define(STR(A), ?SPAN(str,[<<"\"">>, A, <<"\"">>])).
--define(NUM(A), ?SPAN(num,jlib:integer_to_binary(A))).
+-define(NUM(A), ?SPAN(num,integer_to_binary(A))).
 -define(FIELD(A), ?SPAN(field,A)).
 -define(ID(A), ?SPAN(id,A)).
 -define(OP(A), ?SPAN(op,A)).
@@ -79,7 +79,7 @@ md_tag(pre, V) ->
 md_tag(p, V) ->
     [<<"\n\n">>, V, <<"\n">>];
 md_tag(h1, V) ->
-    [<<"\\nn## ">>, V, <<"\n">>];
+    [<<"\n\n## ">>, V, <<"\n">>];
 md_tag(h2, V) ->
     [<<"\n\n### ">>, V, <<"\n">>];
 md_tag(strong, V) ->
@@ -158,7 +158,7 @@ java_call(Name, ArgsDesc, Values, HTMLOutput) ->
      Indent, ?ID_L("client"), ?OP_L("."), ?ID_L("setConfig"), ?OP_L("("), ?ID_L("config"), ?OP_L(");"), ?BR, Indent, ?BR,
      Indent, ?ID_L("client"), ?OP_L("."), ?ID_L("execute"), ?OP_L("("), ?STR_A(Name), ?OP_L(", "),
      java_gen_map(lists:map(fun({A,B})->java_gen(A, B, Indent, HTMLOutput) end, lists:zip(ArgsDesc, Values)), Indent, HTMLOutput),
-     ?OP_L(");"), ?BR].
+     ?OP_L(");")].
 
 -define(XML_S(N, V), ?OP_L("<"), ?FIELD_L(??N), ?OP_L(">"), V).
 -define(XML_E(N), ?OP_L("</"), ?FIELD_L(??N), ?OP_L(">")).
@@ -171,7 +171,7 @@ xml_gen({Name, integer}, Int, Indent, HTMLOutput) ->
     [?XML(member, Indent,
          [?XML_L(name, Indent, 1, ?ID_A(Name)),
           ?XML(value, Indent, 1,
-               [?XML_L(integer, Indent, 2, ?ID(jlib:integer_to_binary(Int)))])])];
+               [?XML_L(integer, Indent, 2, ?ID(integer_to_binary(Int)))])])];
 xml_gen({Name, string}, Str, Indent, HTMLOutput) ->
     [?XML(member, Indent,
          [?XML_L(name, Indent, 1, ?ID_A(Name)),
@@ -360,8 +360,9 @@ gen_doc(#ejabberd_commands{name=Name, tags=_Tags, desc=Desc, longdesc=LongDesc,
                      none ->
                          [?RAW(io_lib:format("~p", [Result]))];
                      _ ->
-                         [?RAW(io_lib:format("~p", [Result])),
-                          ?TAG_R(p, ResultDesc)]
+                         [?TAG(dl, [
+			       ?TAG(dt, io_lib:format("~p", [Result])),
+			       ?TAG_R(dd, ResultDesc)])]
                  end,
 
     [?TAG(h1, [?TAG(strong, atom_to_list(Name)), <<" - ">>, ?RAW(Desc)]),

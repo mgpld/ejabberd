@@ -5,7 +5,7 @@
 %%% Created : 12 Nov 2012 by Evgeniy Khramtsov <ekhramtsov@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2016   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -25,23 +25,28 @@
 
 -module(ejabberd_auth_riak).
 
+-compile([{parse_transform, ejabberd_sql_pt}]).
+
+-behaviour(ejabberd_config).
+
 -author('alexey@process-one.net').
 
 -behaviour(ejabberd_auth).
 
 %% External exports
--export([start/1, set_password/3, check_password/3,
-	 check_password/5, try_register/3,
+-export([start/1, set_password/3, check_password/4,
+	 check_password/6, try_register/3,
 	 dirty_get_registered_users/0, get_vh_registered_users/1,
 	 get_vh_registered_users/2,
 	 get_vh_registered_users_number/1,
 	 get_vh_registered_users_number/2, get_password/2,
 	 get_password_s/2, is_user_exists/2, remove_user/2,
-	 remove_user/3, store_type/0, export/1, import/3,
-	 plain_password_required/0]).
+	 remove_user/3, store_type/0, export/1, import/2,
+	 plain_password_required/0, opt_type/1]).
 -export([passwd_schema/0]).
 
 -include("ejabberd.hrl").
+-include("ejabberd_sql_pt.hrl").
 
 -record(passwd, {us = {<<"">>, <<"">>} :: {binary(), binary()} | '$1',
                  password = <<"">> :: binary() | scram() | '_'}).
@@ -66,9 +71,12 @@ store_type() ->
 passwd_schema() ->
     {record_info(fields, passwd), #passwd{}}.
 
-check_password(User, Server, Password) ->
-    LUser = jid:nodeprep(User),
-    LServer = jid:nameprep(Server),
+check_password(User, AuthzId, Server, Password) ->
+    if AuthzId /= <<>> andalso AuthzId /= User ->
+        false;
+    true ->
+        LUser = jid:nodeprep(User),
+        LServer = jid:nameprep(Server),
     case ejabberd_riak:get(passwd, passwd_schema(), {LUser, LServer}) of
         {ok, #passwd{password = Password}} when is_binary(Password) ->
             Password /= <<"">>;
@@ -76,12 +84,16 @@ check_password(User, Server, Password) ->
             is_password_scram_valid(Password, Scram);
         _ ->
             false
+        end
     end.
 
-check_password(User, Server, Password, Digest,
+check_password(User, AuthzId, Server, Password, Digest,
 	       DigestGen) ->
-    LUser = jid:nodeprep(User),
-    LServer = jid:nameprep(Server),
+    if AuthzId /= <<>> andalso AuthzId /= User ->
+        false;
+    true ->
+        LUser = jid:nodeprep(User),
+        LServer = jid:nameprep(Server),
     case ejabberd_riak:get(passwd, passwd_schema(), {LUser, LServer}) of
       {ok, #passwd{password = Passwd}} when is_binary(Passwd) ->
 	  DigRes = if Digest /= <<"">> ->
@@ -102,6 +114,7 @@ check_password(User, Server, Password, Digest,
 	     true -> (Passwd == Password) and (Password /= <<"">>)
 	  end;
       _ -> false
+        end
     end.
 
 set_password(User, Server, Password) ->
@@ -259,7 +272,7 @@ password_to_scram(Password) ->
 		      ?SCRAM_DEFAULT_ITERATION_COUNT).
 
 password_to_scram(Password, IterationCount) ->
-    Salt = crypto:rand_bytes(?SALT_LENGTH),
+    Salt = randoms:bytes(?SALT_LENGTH),
     SaltedPassword = scram:salted_password(Password, Salt,
 					   IterationCount),
     StoredKey =
@@ -282,17 +295,17 @@ is_password_scram_valid(Password, Scram) ->
 export(_Server) ->
     [{passwd,
       fun(Host, #passwd{us = {LUser, LServer}, password = Password})
-            when LServer == Host ->
-              Username = ejabberd_odbc:escape(LUser),
-              Pass = ejabberd_odbc:escape(Password),
-              [[<<"delete from users where username='">>, Username, <<"';">>],
-               [<<"insert into users(username, password) "
-                  "values ('">>, Username, <<"', '">>, Pass, <<"');">>]];
+         when LServer == Host ->
+              [?SQL("delete from users where username=%(LUser)s;"),
+               ?SQL("insert into users(username, password) "
+                    "values (%(LUser)s, %(Password)s);")];
          (_Host, _R) ->
               []
       end}].
 
-import(LServer, riak, #passwd{} = Passwd) ->
-    ejabberd_riak:put(Passwd, passwd_schema(), [{'2i', [{<<"host">>, LServer}]}]);
-import(_, _, _) ->
-    pass.
+import(LServer, [LUser, Password, _TimeStamp]) ->
+    Passwd = #passwd{us = {LUser, LServer}, password = Password},
+    ejabberd_riak:put(Passwd, passwd_schema(), [{'2i', [{<<"host">>, LServer}]}]).
+
+opt_type(auth_password_format) -> fun (V) -> V end;
+opt_type(_) -> [auth_password_format].

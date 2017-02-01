@@ -4,7 +4,7 @@
 %%% Purpose : Bytestream process.
 %%% Created : 12 Oct 2006 by Evgeniy Khramtsov <xram@jabber.ru>
 %%%
-%%% ejabberd, Copyright (C) 2002-2016   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -83,7 +83,7 @@ init([Socket, Host, Opts]) ->
                                   (anonymous) -> anonymous
                                end, anonymous),
     Shaper = gen_mod:get_opt(shaper, Opts,
-                             fun(A) when is_atom(A) -> A end,
+                             fun acl:shaper_rules_validator/1,
                              none),
     RecvBuf = gen_mod:get_opt(recbuf, Opts,
                               fun(I) when is_integer(I), I>0 -> I end,
@@ -99,9 +99,10 @@ init([Socket, Host, Opts]) ->
 	    socket = Socket, shaper = Shaper, timer = TRef}}.
 
 terminate(_Reason, StateName, #state{sha1 = SHA1}) ->
-    catch mod_proxy65_sm:unregister_stream(SHA1),
+    Mod = gen_mod:ram_db_mod(global, mod_proxy65),
+    Mod:unregister_stream(SHA1),
     if StateName == stream_established ->
-	   ?INFO_MSG("Bytestream terminated", []);
+	   ?INFO_MSG("(~w) Bytestream terminated", [self()]);
        true -> ok
     end.
 
@@ -153,7 +154,7 @@ wait_for_auth(Packet,
 	      #state{socket = Socket, host = Host} = StateData) ->
     case mod_proxy65_lib:unpack_auth_request(Packet) of
       {User, Pass} ->
-	  Result = ejabberd_auth:check_password(User, Host, Pass),
+	  Result = ejabberd_auth:check_password(User, <<"">>, Host, Pass),
 	  gen_tcp:send(Socket,
 		       mod_proxy65_lib:make_auth_reply(Result)),
 	  case Result of
@@ -168,8 +169,9 @@ wait_for_request(Packet,
     Request = mod_proxy65_lib:unpack_request(Packet),
     case Request of
       #s5_request{sha1 = SHA1, cmd = connect} ->
-	  case catch mod_proxy65_sm:register_stream(SHA1) of
-	    {atomic, ok} ->
+	  Mod = gen_mod:ram_db_mod(global, mod_proxy65),
+	  case Mod:register_stream(SHA1, self()) of
+	    ok ->
 		inet:setopts(Socket, [{active, false}]),
 		gen_tcp:send(Socket,
 			     mod_proxy65_lib:make_reply(Request)),

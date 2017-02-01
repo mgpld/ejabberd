@@ -1,27 +1,22 @@
-%%% ====================================================================
-%%% ``The contents of this file are subject to the Erlang Public License,
-%%% Version 1.1, (the "License"); you may not use this file except in
-%%% compliance with the License. You should have received a copy of the
-%%% Erlang Public License along with this software. If not, it can be
-%%% retrieved via the world wide web at http://www.erlang.org/.
-%%% 
+%%%----------------------------------------------------------------------
 %%%
-%%% Software distributed under the License is distributed on an "AS IS"
-%%% basis, WITHOUT WARRANTY OF ANY KIND, either express or implied. See
-%%% the License for the specific language governing rights and limitations
-%%% under the License.
-%%% 
+%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
 %%%
-%%% The Initial Developer of the Original Code is ProcessOne.
-%%% Portions created by ProcessOne are Copyright 2006-2016, ProcessOne
-%%% All Rights Reserved.''
-%%% This software is copyright 2006-2016, ProcessOne.
+%%% This program is free software; you can redistribute it and/or
+%%% modify it under the terms of the GNU General Public License as
+%%% published by the Free Software Foundation; either version 2 of the
+%%% License, or (at your option) any later version.
 %%%
+%%% This program is distributed in the hope that it will be useful,
+%%% but WITHOUT ANY WARRANTY; without even the implied warranty of
+%%% MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+%%% General Public License for more details.
 %%%
-%%% copyright 2006-2016 ProcessOne
+%%% You should have received a copy of the GNU General Public License along
+%%% with this program; if not, write to the Free Software Foundation, Inc.,
+%%% 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 %%%
-%%% This file contains pubsub types definition.
-%%% ====================================================================
+%%%----------------------------------------------------------------------
 
 -include("ejabberd.hrl").
 
@@ -65,7 +60,7 @@
 %% note: pos_integer() should always be used, but we allow anything else coded
 %% as binary, so one can have a custom implementation of nodetree with custom
 %% indexing (see nodetree_virtual). this also allows to use any kind of key for
-%% indexing nodes, as this can be usefull with external backends such as odbc.
+%% indexing nodes, as this can be usefull with external backends such as sql.
 
 -type(itemId() :: binary()).
 %% @type itemId() = string().
@@ -93,7 +88,12 @@
 
 -type(subOptions() :: [mod_pubsub:subOption(),...]).
 
+-type(pubOption() ::
+    {Option::binary(),
+     Values::[binary()]
+}).
 
+-type(pubOptions() :: [mod_pubsub:pubOption()]).
 
 -type(affiliation() :: 'none'
                      | 'owner'
@@ -166,8 +166,14 @@
 
 -record(pubsub_last_item,
 {
-    nodeid   ,% :: mod_pubsub:nodeIdx(),
+    nodeid   ,% :: {binary(), mod_pubsub:nodeIdx()},
     itemid   ,% :: mod_pubsub:itemId(),
     creation ,% :: {erlang:timestamp(), jlib:ljid()},
     payload  % :: mod_pubsub:payload()
+}).
+
+-record(pubsub_orphan,
+{
+    nodeid    ,% :: mod_pubsub:nodeIdx(),
+    items = [] % :: list()
 }).

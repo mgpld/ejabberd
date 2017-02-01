@@ -5,7 +5,7 @@
 %%% Created :  1 Dec 2007 by Christophe Romain <christophe.romain@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2016   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -34,12 +34,12 @@
 -author('christophe.romain@process-one.net').
 
 -include("pubsub.hrl").
--include("jlib.hrl").
+-include("xmpp.hrl").
 
 -export([init/3, terminate/2, options/0, features/0,
     create_node_permission/6, create_node/2, delete_node/1,
     purge_node/2, subscribe_node/8, unsubscribe_node/4,
-    publish_item/6, delete_item/4, remove_extra_items/3,
+    publish_item/7, delete_item/4, remove_extra_items/3,
     get_entity_affiliations/2, get_node_affiliations/1,
     get_affiliation/2, set_affiliation/3,
     get_entity_subscriptions/2, get_node_subscriptions/1,
@@ -71,7 +71,8 @@ options() ->
 	{max_payload_size, ?MAX_PAYLOAD_SIZE},
 	{send_last_published_item, never},
 	{deliver_notifications, true},
-	{presence_based_delivery, false}].
+	{presence_based_delivery, false},
+	{itemreply, none}].
 
 features() ->
     [<<"create-nodes">>,
@@ -93,18 +94,21 @@ delete_node(Nodes) ->
 
 subscribe_node(_Nidx, _Sender, _Subscriber, _AccessModel, _SendLast, _PresenceSubscription,
 	    _RosterGroup, _Options) ->
-    {error, ?ERR_FORBIDDEN}.
+    {error, mod_pubsub:extended_error(xmpp:err_feature_not_implemented(),
+				      mod_pubsub:err_unsupported('subscribe'))}.
 
 unsubscribe_node(_Nidx, _Sender, _Subscriber, _SubId) ->
-    {error, ?ERR_FORBIDDEN}.
+    {error, mod_pubsub:extended_error(xmpp:err_feature_not_implemented(),
+				      mod_pubsub:err_unsupported('subscribe'))}.
 
-publish_item(Nidx, Publisher, PublishModel, MaxItems, ItemId, Payload) ->
+publish_item(Nidx, Publisher, PublishModel, MaxItems, ItemId, Payload,
+	     PubOpts) ->
     case nodetree_tree:get_node(Nidx) of
 	#pubsub_node{nodeid = {Host, Node}} ->
 	    lists:foreach(fun (SubNode) ->
 			node_hometree:publish_item(SubNode#pubsub_node.id,
 			    Publisher, PublishModel, MaxItems,
-			    ItemId, Payload)
+			    ItemId, Payload, PubOpts)
 		end,
 		nodetree_tree:get_subnodes(Host, Node, Publisher)),
 	    {result, {default, broadcast, []}};
@@ -116,10 +120,12 @@ remove_extra_items(_Nidx, _MaxItems, ItemIds) ->
     {result, {ItemIds, []}}.
 
 delete_item(_Nidx, _Publisher, _PublishModel, _ItemId) ->
-    {error, ?ERR_ITEM_NOT_FOUND}.
+    {error, mod_pubsub:extended_error(xmpp:err_feature_not_implemented(),
+				      mod_pubsub:err_unsupported('delete-items'))}.
 
 purge_node(_Nidx, _Owner) ->
-    {error, ?ERR_FORBIDDEN}.
+    {error, mod_pubsub:extended_error(xmpp:err_feature_not_implemented(),
+				      mod_pubsub:err_unsupported('purge-nodes'))}.
 
 get_entity_affiliations(_Host, _Owner) ->
     {result, []}.

@@ -1,18 +1,34 @@
 %%%-------------------------------------------------------------------
-%%% @author Evgeny Khramtsov <ekhramtsov@process-one.net>
-%%% @copyright (C) 2016, Evgeny Khramtsov
-%%% @doc
-%%%
-%%% @end
+%%% File    : prosody2ejabberd.erl
+%%% Author  : Evgeny Khramtsov <ekhramtsov@process-one.net>
 %%% Created : 20 Jan 2016 by Evgeny Khramtsov <ekhramtsov@process-one.net>
-%%%-------------------------------------------------------------------
+%%%
+%%%
+%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
+%%%
+%%% This program is free software; you can redistribute it and/or
+%%% modify it under the terms of the GNU General Public License as
+%%% published by the Free Software Foundation; either version 2 of the
+%%% License, or (at your option) any later version.
+%%%
+%%% This program is distributed in the hope that it will be useful,
+%%% but WITHOUT ANY WARRANTY; without even the implied warranty of
+%%% MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+%%% General Public License for more details.
+%%%
+%%% You should have received a copy of the GNU General Public License along
+%%% with this program; if not, write to the Free Software Foundation, Inc.,
+%%% 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+%%%
+%%%----------------------------------------------------------------------
+
 -module(prosody2ejabberd).
 
 %% API
 -export([from_dir/1]).
 
 -include("ejabberd.hrl").
--include("jlib.hrl").
+-include("xmpp.hrl").
 -include("logger.hrl").
 -include("mod_roster.hrl").
 -include("mod_offline.hrl").
@@ -300,8 +316,8 @@ convert_privacy_item({_, Item}) ->
 	      match_presence_out = MatchPresOut}.
 
 el_to_offline_msg(LUser, LServer, #xmlel{attrs = Attrs} = El) ->
-    case jlib:datetime_string_to_timestamp(
-	   fxml:get_attr_s(<<"stamp">>, Attrs)) of
+    try xmpp_util:decode_timestamp(
+	  fxml:get_attr_s(<<"stamp">>, Attrs)) of
 	{_, _, _} = TS ->
 	    Attrs1 = lists:filter(
 		       fun(<<"stamp">>) -> false;
@@ -321,8 +337,8 @@ el_to_offline_msg(LUser, LServer, #xmlel{attrs = Attrs} = El) ->
 			packet = Packet}];
 		_ ->
 		    []
-	    end;
-	_ ->
+	    end
+    catch _:{bad_timestamp, _} ->
 	    []
     end.
 

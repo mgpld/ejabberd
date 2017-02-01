@@ -5,7 +5,7 @@
 %%% Created : 15 Dec 2015 by Christophe Romain <christophe.romain@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2016   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -28,12 +28,12 @@
 -author('christophe.romain@process-one.net').
 
 -include("pubsub.hrl").
--include("jlib.hrl").
+-include("jid.hrl").
 
 -export([init/3, terminate/2, options/0, features/0,
     create_node_permission/6, create_node/2, delete_node/1,
     purge_node/2, subscribe_node/8, unsubscribe_node/4,
-    publish_item/6, delete_item/4, remove_extra_items/3,
+    publish_item/7, delete_item/4, remove_extra_items/3,
     get_entity_affiliations/2, get_node_affiliations/1,
     get_affiliation/2, set_affiliation/3,
     get_entity_subscriptions/2, get_node_subscriptions/1,
@@ -57,6 +57,7 @@ terminate(Host, ServerHost) ->
 			  ?MODULE, user_offline, 75),
     ok.
 
+-spec user_offline(ejabberd_sm:sid(), jid(), ejabberd_sm:info()) -> _.
 user_offline(_SID, #jid{luser=LUser,lserver=LServer}, _Info) ->
     mod_pubsub:remove_user(LUser, LServer).
 
@@ -76,7 +77,8 @@ options() ->
 	{max_payload_size, ?MAX_PAYLOAD_SIZE},
 	{send_last_published_item, on_sub_and_presence},
 	{deliver_notifications, true},
-	{presence_based_delivery, true}].
+	{presence_based_delivery, true},
+	{itemreply, none}].
 
 features() ->
     node_flat:features().
@@ -98,8 +100,9 @@ subscribe_node(Nidx, Sender, Subscriber, AccessModel,
 unsubscribe_node(Nidx, Sender, Subscriber, SubId) ->
     node_flat:unsubscribe_node(Nidx, Sender, Subscriber, SubId).
 
-publish_item(Nidx, Publisher, Model, MaxItems, ItemId, Payload) ->
-    node_flat:publish_item(Nidx, Publisher, Model, MaxItems, ItemId, Payload).
+publish_item(Nidx, Publisher, Model, MaxItems, ItemId, Payload, PubOpts) ->
+    node_flat:publish_item(Nidx, Publisher, Model, MaxItems, ItemId,
+	Payload, PubOpts).
 
 remove_extra_items(Nidx, MaxItems, ItemIds) ->
     node_flat:remove_extra_items(Nidx, MaxItems, ItemIds).

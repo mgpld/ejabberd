@@ -5,7 +5,7 @@
 %%% Created :
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2016   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -46,20 +46,17 @@
 %% utility for other http modules
 -export([content_type/3]).
 
--export([reopen_log/1, mod_opt_type/1]).
+-export([reopen_log/0, mod_opt_type/1, depends/2]).
 
 -include("ejabberd.hrl").
 -include("logger.hrl").
 -include("ejabberd_http.hrl").
-
--include("jlib.hrl").
-
 -include_lib("kernel/include/file.hrl").
 
 -record(state,
 	{host, docroot, accesslog, accesslogfd,
 	 directory_indices, custom_headers, default_content_type,
-	 content_types = []}).
+	 content_types = [], user_access = none}).
 
 -define(PROCNAME, ejabberd_mod_http_fileserver).
 
@@ -109,6 +106,9 @@ stop(Host) ->
     supervisor:terminate_child(ejabberd_sup, Proc),
     supervisor:delete_child(ejabberd_sup, Proc).
 
+depends(_Host, _Opts) ->
+    [].
+
 %%====================================================================
 %% API
 %%====================================================================
@@ -133,7 +133,8 @@ start_link(Host, Opts) ->
 init([Host, Opts]) ->
     try initialize(Host, Opts) of
 	{DocRoot, AccessLog, AccessLogFD, DirectoryIndices,
-         CustomHeaders, DefaultContentType, ContentTypes} ->
+	 CustomHeaders, DefaultContentType, ContentTypes,
+	 UserAccess} ->
 	    {ok, #state{host = Host,
 			accesslog = AccessLog,
 			accesslogfd = AccessLogFD,
@@ -141,7 +142,8 @@ init([Host, Opts]) ->
                         directory_indices = DirectoryIndices,
                         custom_headers = CustomHeaders,
                         default_content_type = DefaultContentType,
-                        content_types = ContentTypes}}
+			content_types = ContentTypes,
+			user_access = UserAccess}}
     catch
 	throw:Reason ->
 	    {stop, Reason}
@@ -165,7 +167,15 @@ initialize(Host, Opts) ->
                                     []),
     DefaultContentType = gen_mod:get_opt(default_content_type, Opts,
                                          fun iolist_to_binary/1,
-                                         ?DEFAULT_CONTENT_TYPE),
+					 ?DEFAULT_CONTENT_TYPE),
+    UserAccess0 = gen_mod:get_opt(must_authenticate_with, Opts,
+				  mod_opt_type(must_authenticate_with),
+				  []),
+    UserAccess = case UserAccess0 of
+		     [] -> none;
+		     _ ->
+			 dict:from_list(UserAccess0)
+		 end,
     ContentTypes = build_list_content_types(
                      gen_mod:get_opt(content_types, Opts,
                                      fun(L) when is_list(L) ->
@@ -180,7 +190,7 @@ initialize(Host, Opts) ->
 	      [str:join([[$*, K, " -> ", V] || {K, V} <- ContentTypes],
 			<<", ">>)]),
     {DocRoot, AccessLog, AccessLogFD, DirectoryIndices,
-     CustomHeaders, DefaultContentType, ContentTypes}.
+     CustomHeaders, DefaultContentType, ContentTypes, UserAccess}.
 
 
 %% @spec (AdminCTs::[CT], Default::[CT]) -> [CT]
@@ -226,7 +236,7 @@ check_docroot_is_readable(DRInfo, DocRoot) ->
 
 try_open_log(undefined, _Host) ->
     undefined;
-try_open_log(FN, Host) ->
+try_open_log(FN, _Host) ->
     FD = try open_log(FN) of
 	     FD1 -> FD1
 	 catch
@@ -234,7 +244,7 @@ try_open_log(FN, Host) ->
 		 ?ERROR_MSG("Cannot open access log file: ~p~nReason: ~p", [FN, Reason]),
 		 undefined
 	 end,
-    ejabberd_hooks:add(reopen_log_hook, Host, ?MODULE, reopen_log, 50),
+    ejabberd_hooks:add(reopen_log_hook, ?MODULE, reopen_log, 50),
     FD.
 
 %%--------------------------------------------------------------------
@@ -246,10 +256,11 @@ try_open_log(FN, Host) ->
 %%                                      {stop, Reason, State}
 %% Description: Handling call messages
 %%--------------------------------------------------------------------
-handle_call({serve, LocalPath}, _From, State) ->
-    Reply = serve(LocalPath, State#state.docroot, State#state.directory_indices,
+handle_call({serve, LocalPath, Auth}, _From, State) ->
+    Reply = serve(LocalPath, Auth, State#state.docroot, State#state.directory_indices,
 		  State#state.custom_headers,
-                  State#state.default_content_type, State#state.content_types),
+		  State#state.default_content_type, State#state.content_types,
+		  State#state.user_access),
     {reply, Reply, State};
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
@@ -287,7 +298,8 @@ handle_info(_Info, State) ->
 %%--------------------------------------------------------------------
 terminate(_Reason, State) ->
     close_log(State#state.accesslogfd),
-    ejabberd_hooks:delete(reopen_log_hook, State#state.host, ?MODULE, reopen_log, 50),
+    %% TODO: unregister the hook gracefully
+    %% ejabberd_hooks:delete(reopen_log_hook, State#state.host, ?MODULE, reopen_log, 50),
     ok.
 
 %%--------------------------------------------------------------------
@@ -305,9 +317,9 @@ code_change(_OldVsn, State, _Extra) ->
 %% @doc Handle an HTTP request.
 %% LocalPath is the part of the requested URL path that is "local to the module".
 %% Returns the page to be sent back to the client and/or HTTP status code.
-process(LocalPath, Request) ->
+process(LocalPath, #request{host = Host, auth = Auth} = Request) ->
     ?DEBUG("Requested ~p", [LocalPath]),
-    try gen_server:call(get_proc_name(Request#request.host), {serve, LocalPath}) of
+    try gen_server:call(get_proc_name(Host), {serve, LocalPath, Auth}) of
 	{FileSize, Code, Headers, Contents} ->
 	    add_to_log(FileSize, Code, Request),
 	    {Code, Headers, Contents}
@@ -318,21 +330,38 @@ process(LocalPath, Request) ->
 	    ejabberd_web:error(not_found)
     end.
 
-serve(LocalPath, DocRoot, DirectoryIndices, CustomHeaders, DefaultContentType, ContentTypes) ->
-    FileName = filename:join(filename:split(DocRoot) ++ LocalPath),
-    case file:read_file_info(FileName) of
-        {error, enoent}                    -> ?HTTP_ERR_FILE_NOT_FOUND;
-        {error, enotdir}                   -> ?HTTP_ERR_FILE_NOT_FOUND;
-        {error, eacces}                    -> ?HTTP_ERR_FORBIDDEN;
-        {ok, #file_info{type = directory}} -> serve_index(FileName,
-                                                          DirectoryIndices,
-                                                          CustomHeaders,
-                                                          DefaultContentType,
-                                                          ContentTypes);
-        {ok, FileInfo}                     -> serve_file(FileInfo, FileName,
-                                                         CustomHeaders,
-                                                         DefaultContentType,
-                                                         ContentTypes)
+
+serve(LocalPath, Auth, DocRoot, DirectoryIndices, CustomHeaders, DefaultContentType,
+    ContentTypes, UserAccess) ->
+    CanProceed = case {UserAccess, Auth} of
+		     {none, _} -> true;
+		     {_, {User, Pass}} ->
+			 case dict:find(User, UserAccess) of
+			     {ok, Pass} -> true;
+			     _ -> false
+			 end;
+		     _ ->
+			 false
+		 end,
+    case CanProceed of
+	true ->
+	    FileName = filename:join(filename:split(DocRoot) ++ LocalPath),
+	    case file:read_file_info(FileName) of
+		{error, enoent}                    -> ?HTTP_ERR_FILE_NOT_FOUND;
+		{error, enotdir}                   -> ?HTTP_ERR_FILE_NOT_FOUND;
+		{error, eacces}                    -> ?HTTP_ERR_FORBIDDEN;
+		{ok, #file_info{type = directory}} -> serve_index(FileName,
+								  DirectoryIndices,
+								  CustomHeaders,
+								  DefaultContentType,
+								  ContentTypes);
+		{ok, FileInfo}                     -> serve_file(FileInfo, FileName,
+								 CustomHeaders,
+								 DefaultContentType,
+								 ContentTypes)
+	    end;
+	_ ->
+	    ?HTTP_ERR_FORBIDDEN
     end.
 
 %% Troll through the directory indices attempting to find one which
@@ -382,8 +411,11 @@ reopen_log(FN, FD) ->
     close_log(FD),
     open_log(FN).
 
-reopen_log(Host) ->
-    gen_server:cast(get_proc_name(Host), reopen_log).
+reopen_log() ->
+    lists:foreach(
+      fun(Host) ->
+	      gen_server:cast(get_proc_name(Host), reopen_log)
+      end, ?MYHOSTS).
 
 add_to_log(FileSize, Code, Request) ->
     gen_server:cast(get_proc_name(Request#request.host),
@@ -466,6 +498,14 @@ mod_opt_type(default_content_type) ->
 mod_opt_type(directory_indices) ->
     fun (L) when is_list(L) -> L end;
 mod_opt_type(docroot) -> fun (A) -> A end;
+mod_opt_type(must_authenticate_with) ->
+    fun (L) when is_list(L) ->
+	    lists:map(fun(UP) when is_binary(UP) ->
+			      [K, V] = binary:split(UP, <<":">>),
+			      {K, V}
+		      end, L)
+    end;
 mod_opt_type(_) ->
     [accesslog, content_types, custom_headers,
-     default_content_type, directory_indices, docroot].
+     default_content_type, directory_indices, docroot,
+     must_authenticate_with].

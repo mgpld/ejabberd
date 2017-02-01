@@ -5,7 +5,7 @@
 %%% Created : 23 Nov 2002 by Alexey Shchepin <alexey@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2016   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -32,17 +32,17 @@
 -author('alexey@process-one.net').
 
 %% External exports
--export([start/0, set_password/3, check_password/3,
-	 check_password/5, check_password_with_authmodule/3,
-	 check_password_with_authmodule/5, try_register/3,
+-export([start/0, set_password/3, check_password/4,
+	 check_password/6, check_password_with_authmodule/4,
+	 check_password_with_authmodule/6, try_register/3,
 	 dirty_get_registered_users/0, get_vh_registered_users/1,
-	 get_vh_registered_users/2, export/1, import/1,
-	 get_vh_registered_users_number/1, import/3,
+	 get_vh_registered_users/2, export/1, import_info/0,
+	 get_vh_registered_users_number/1, import/5, import_start/2,
 	 get_vh_registered_users_number/2, get_password/2,
 	 get_password_s/2, get_password_with_authmodule/2,
 	 is_user_exists/2, is_user_exists_in_other_modules/3,
 	 remove_user/2, remove_user/3, plain_password_required/1,
-	 store_type/1, entropy/1]).
+	 store_type/1, entropy/1, backend_type/1]).
 
 -export([auth_modules/1, opt_type/1]).
 
@@ -63,8 +63,8 @@
 -callback remove_user(binary(), binary()) -> any().
 -callback remove_user(binary(), binary(), binary()) -> any().
 -callback is_user_exists(binary(), binary()) -> boolean() | {error, atom()}.
--callback check_password(binary(), binary(), binary()) -> boolean().
--callback check_password(binary(), binary(), binary(), binary(),
+-callback check_password(binary(), binary(), binary(), binary()) -> boolean().
+-callback check_password(binary(), binary(), binary(), binary(), binary(),
                          fun((binary()) -> binary())) -> boolean().
 -callback try_register(binary(), binary(), binary()) -> {atomic, atom()} |
                                                         {error, atom()}.
@@ -102,10 +102,10 @@ store_type(Server) ->
 		end,
 		plain, auth_modules(Server)).
 
--spec check_password(binary(), binary(), binary()) -> boolean().
+-spec check_password(binary(), binary(), binary(), binary()) -> boolean().
 
-check_password(User, Server, Password) ->
-    case check_password_with_authmodule(User, Server,
+check_password(User, AuthzId, Server, Password) ->
+    case check_password_with_authmodule(User, AuthzId, Server,
 					Password)
 	of
       {true, _AuthModule} -> true;
@@ -113,15 +113,15 @@ check_password(User, Server, Password) ->
     end.
 
 %% @doc Check if the user and password can login in server.
-%% @spec (User::string(), Server::string(), Password::string(),
+%% @spec (User::string(), AuthzId::string(), Server::string(), Password::string(),
 %%        Digest::string(), DigestGen::function()) ->
 %%     true | false
--spec check_password(binary(), binary(), binary(), binary(),
+-spec check_password(binary(), binary(), binary(), binary(), binary(),
                      fun((binary()) -> binary())) -> boolean().
                                  
-check_password(User, Server, Password, Digest,
+check_password(User, AuthzId, Server, Password, Digest,
 	       DigestGen) ->
-    case check_password_with_authmodule(User, Server,
+    case check_password_with_authmodule(User, AuthzId, Server,
 					Password, Digest, DigestGen)
 	of
       {true, _AuthModule} -> true;
@@ -132,28 +132,28 @@ check_password(User, Server, Password, Digest,
 %% The user can login if at least an authentication method accepts the user
 %% and the password.
 %% The first authentication method that accepts the credentials is returned.
-%% @spec (User::string(), Server::string(), Password::string()) ->
+%% @spec (User::string(), AuthzId::string(), Server::string(), Password::string()) ->
 %%     {true, AuthModule} | false
 %% where
 %%   AuthModule = ejabberd_auth_anonymous | ejabberd_auth_external
-%%                 | ejabberd_auth_internal | ejabberd_auth_ldap
-%%                 | ejabberd_auth_odbc | ejabberd_auth_pam
--spec check_password_with_authmodule(binary(), binary(), binary()) -> false |
+%%                 | ejabberd_auth_mnesia | ejabberd_auth_ldap
+%%                 | ejabberd_auth_sql | ejabberd_auth_pam | ejabberd_auth_riak
+-spec check_password_with_authmodule(binary(), binary(), binary(), binary()) -> false |
                                                                       {true, atom()}.
 
-check_password_with_authmodule(User, Server,
+check_password_with_authmodule(User, AuthzId, Server,
 			       Password) ->
     check_password_loop(auth_modules(Server),
-			[User, Server, Password]).
+			[User, AuthzId, Server, Password]).
 
--spec check_password_with_authmodule(binary(), binary(), binary(), binary(),
+-spec check_password_with_authmodule(binary(), binary(), binary(), binary(), binary(),
                                      fun((binary()) -> binary())) -> false |
                                                                      {true, atom()}.
 
-check_password_with_authmodule(User, Server, Password,
+check_password_with_authmodule(User, AuthzId, Server, Password,
 			       Digest, DigestGen) ->
     check_password_loop(auth_modules(Server),
-			[User, Server, Password, Digest, DigestGen]).
+			[User, AuthzId, Server, Password, Digest, DigestGen]).
 
 check_password_loop([], _Args) -> false;
 check_password_loop([AuthModule | AuthModules], Args) ->
@@ -188,7 +188,7 @@ try_register(User, Server, Password) ->
       true -> {atomic, exists};
       false ->
 	  LServer = jid:nameprep(Server),
-	  case lists:member(LServer, ?MYHOSTS) of
+	  case ejabberd_router:is_my_host(LServer) of
 	    true ->
 		Res = lists:foldl(fun (_M, {atomic, ok} = Res) -> Res;
 				      (M, _) ->
@@ -412,6 +412,13 @@ entropy(B) ->
 	  length(S) * math:log(lists:sum(Set)) / math:log(2)
     end.
 
+-spec backend_type(atom()) -> atom().
+backend_type(Mod) ->
+    case atom_to_list(Mod) of
+	"ejabberd_auth_" ++ T -> list_to_atom(T);
+	_ -> Mod
+    end.
+
 %%%----------------------------------------------------------------------
 %%% Internal functions
 %%%----------------------------------------------------------------------
@@ -428,38 +435,34 @@ auth_modules() ->
 %% Return the list of authenticated modules for a given host
 auth_modules(Server) ->
     LServer = jid:nameprep(Server),
-    Default = case gen_mod:default_db(LServer) of
-		  mnesia -> internal;
-		  DBType -> DBType
-	      end,
+    Default = ejabberd_config:default_db(LServer, ?MODULE),
     Methods = ejabberd_config:get_option(
-                {auth_method, LServer},
-                fun(V) when is_list(V) ->
-                        true = lists:all(fun is_atom/1, V),
-                        V;
-                   (V) when is_atom(V) ->
-                        [V]
-                end, [Default]),
+                {auth_method, LServer}, opt_type(auth_method), [Default]),
     [jlib:binary_to_atom(<<"ejabberd_auth_",
                            (jlib:atom_to_binary(M))/binary>>)
      || M <- Methods].
 
 export(Server) ->
-    ejabberd_auth_internal:export(Server).
+    ejabberd_auth_mnesia:export(Server).
 
-import(Server) ->
-    ejabberd_auth_internal:import(Server).
+import_info() ->
+    [{<<"users">>, 3}].
 
-import(Server, mnesia, Passwd) ->
-    ejabberd_auth_internal:import(Server, mnesia, Passwd);
-import(Server, riak, Passwd) ->
-    ejabberd_auth_riak:import(Server, riak, Passwd);
-import(_, _, _) ->
-    pass.
+import_start(_LServer, mnesia) ->
+    ejabberd_auth_mnesia:init_db();
+import_start(_LServer, _) ->
+    ok.
+
+import(Server, {sql, _}, mnesia, <<"users">>, Fields) ->
+    ejabberd_auth_mnesia:import(Server, Fields);
+import(Server, {sql, _}, riak, <<"users">>, Fields) ->
+    ejabberd_auth_riak:import(Server, Fields);
+import(_LServer, {sql, _}, sql, <<"users">>, _) ->
+    ok.
 
 opt_type(auth_method) ->
     fun (V) when is_list(V) ->
-	    true = lists:all(fun is_atom/1, V), V;
-	(V) when is_atom(V) -> [V]
+	    lists:map(fun(M) -> ejabberd_config:v_db(?MODULE, M) end, V);
+	(V) -> [ejabberd_config:v_db(?MODULE, V)]
     end;
 opt_type(_) -> [auth_method].

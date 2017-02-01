@@ -5,7 +5,7 @@
 %%% Created : 20 Aug 2015 by Holger Weiss <holger@zedat.fu-berlin.de>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2015-2016   ProcessOne
+%%% ejabberd, Copyright (C) 2015-2017   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -35,7 +35,7 @@
 -define(FORMAT(Error), file:format_error(Error)).
 -define(URL_ENC(URL), binary_to_list(ejabberd_http:url_encode(URL))).
 -define(ADDR_TO_STR(IP), ejabberd_config:may_hide_data(jlib:ip_to_list(IP))).
--define(STR_TO_INT(Str, B), jlib:binary_to_integer(iolist_to_binary(Str), B)).
+-define(STR_TO_INT(Str, B), binary_to_integer(iolist_to_binary(Str), B)).
 -define(DEFAULT_CONTENT_TYPE, <<"application/octet-stream">>).
 -define(CONTENT_TYPES,
 	[{<<".avi">>, <<"video/avi">>},
@@ -68,6 +68,7 @@
 -export([start_link/3,
 	 start/2,
 	 stop/1,
+	 depends/2,
 	 mod_opt_type/1]).
 
 %% gen_server callbacks.
@@ -86,11 +87,12 @@
 
 %% Utility functions.
 -export([get_proc_name/2,
-	 expand_home/1]).
+	 expand_home/1,
+	 expand_host/2]).
 
 -include("ejabberd.hrl").
 -include("ejabberd_http.hrl").
--include("jlib.hrl").
+-include("xmpp.hrl").
 -include("logger.hrl").
 
 -record(state,
@@ -137,8 +139,6 @@ start(ServerHost, Opts) ->
 			 true) of
 	true ->
 	    ejabberd_hooks:add(remove_user, ServerHost, ?MODULE,
-			       remove_user, 50),
-	    ejabberd_hooks:add(anonymous_purge_hook, ServerHost, ?MODULE,
 			       remove_user, 50);
 	false ->
 	    ok
@@ -160,8 +160,6 @@ stop(ServerHost) ->
 			        true) of
 	true ->
 	    ejabberd_hooks:delete(remove_user, ServerHost, ?MODULE,
-				  remove_user, 50),
-	    ejabberd_hooks:delete(anonymous_purge_hook, ServerHost, ?MODULE,
 				  remove_user, 50);
 	false ->
 	    ok
@@ -177,7 +175,7 @@ mod_opt_type(host) ->
 mod_opt_type(name) ->
     fun iolist_to_binary/1;
 mod_opt_type(access) ->
-    fun(A) when is_atom(A) -> A end;
+    fun acl:access_rules_validator/1;
 mod_opt_type(max_size) ->
     fun(I) when is_integer(I), I > 0 -> I;
        (infinity) -> infinity
@@ -221,6 +219,11 @@ mod_opt_type(_) ->
      dir_mode, docroot, put_url, get_url, service_url, custom_headers,
      rm_on_unregister, thumbnail].
 
+-spec depends(binary(), gen_mod:opts()) -> [{module(), hard | soft}].
+
+depends(_Host, _Opts) ->
+    [].
+
 %%--------------------------------------------------------------------
 %% gen_server callbacks.
 %%--------------------------------------------------------------------
@@ -234,7 +237,7 @@ init({ServerHost, Opts}) ->
 			   fun iolist_to_binary/1,
 			   <<"HTTP File Upload">>),
     Access = gen_mod:get_opt(access, Opts,
-			     fun(A) when is_atom(A) -> A end,
+			     fun acl:access_rules_validator/1,
 			     local),
     MaxSize = gen_mod:get_opt(max_size, Opts,
 			      fun(I) when is_integer(I), I > 0 -> I;
@@ -273,6 +276,8 @@ init({ServerHost, Opts}) ->
     Thumbnail = gen_mod:get_opt(thumbnail, Opts,
 				fun(B) when is_boolean(B) -> B end,
 				true),
+    DocRoot1 = expand_home(str:strip(DocRoot, right, $/)),
+    DocRoot2 = expand_host(DocRoot1, ServerHost),
     case ServiceURL of
 	undefined ->
 	    ok;
@@ -289,7 +294,7 @@ init({ServerHost, Opts}) ->
 	undefined ->
 	    ok;
 	Mode ->
-	    file:change_mode(DocRoot, Mode)
+	    file:change_mode(DocRoot2, Mode)
     end,
     case Thumbnail of
 	true ->
@@ -303,13 +308,13 @@ init({ServerHost, Opts}) ->
 	false ->
 	    ok
     end,
-    ejabberd_router:register_route(Host),
+    ejabberd_router:register_route(Host, ServerHost),
     {ok, #state{server_host = ServerHost, host = Host, name = Name,
 		access = Access, max_size = MaxSize,
 		secret_length = SecretLength, jid_in_url = JIDinURL,
 		file_mode = FileMode, dir_mode = DirMode,
 		thumbnail = Thumbnail,
-		docroot = expand_home(str:strip(DocRoot, right, $/)),
+		docroot = DocRoot2,
 		put_url = expand_host(str:strip(PutURL, right, $/), ServerHost),
 		get_url = expand_host(str:strip(GetURL, right, $/), ServerHost),
 		service_url = ServiceURL}}.
@@ -318,22 +323,24 @@ init({ServerHost, Opts}) ->
       -> {reply, {ok, pos_integer(), binary(),
 		      pos_integer() | undefined,
 		      pos_integer() | undefined}, state()} |
-	 {reply, {error, binary()}, state()} | {noreply, state()}.
+	 {reply, {error, atom()}, state()} | {noreply, state()}.
 
-handle_call({use_slot, Slot}, _From, #state{file_mode = FileMode,
-					    dir_mode = DirMode,
-					    get_url = GetPrefix,
-					    thumbnail = Thumbnail,
-					    docroot = DocRoot} = State) ->
+handle_call({use_slot, Slot, Size}, _From, #state{file_mode = FileMode,
+						  dir_mode = DirMode,
+						  get_url = GetPrefix,
+						  thumbnail = Thumbnail,
+						  docroot = DocRoot} = State) ->
     case get_slot(Slot, State) of
 	{ok, {Size, Timer}} ->
 	    timer:cancel(Timer),
 	    NewState = del_slot(Slot, State),
 	    Path = str:join([DocRoot | Slot], <<$/>>),
-	    {reply, {ok, Size, Path, FileMode, DirMode, GetPrefix, Thumbnail},
+	    {reply, {ok, Path, FileMode, DirMode, GetPrefix, Thumbnail},
 	     NewState};
+	{ok, {_WrongSize, _Timer}} ->
+	    {reply, {error, size_mismatch}, State};
 	error ->
-	    {reply, {error, <<"Invalid slot">>}, State}
+	    {reply, {error, invalid_slot}, State}
     end;
 handle_call(get_docroot, _From, #state{docroot = DocRoot} = State) ->
     {reply, {ok, DocRoot}, State};
@@ -349,9 +356,9 @@ handle_cast(Request, State) ->
 
 -spec handle_info(timeout | _, state()) -> {noreply, state()}.
 
-handle_info({route, From, To, #xmlel{name = <<"iq">>} = Stanza}, State) ->
-    Request = jlib:iq_query_info(Stanza),
-    {Reply, NewState} = case process_iq(From, Request, State) of
+handle_info({route, From, To, #iq{} = Packet}, State) ->
+    IQ = xmpp:decode_els(Packet),
+    {Reply, NewState} = case process_iq(From, IQ, State) of
 			    R when is_record(R, iq) ->
 				{R, State};
 			    {R, S} ->
@@ -360,7 +367,7 @@ handle_info({route, From, To, #xmlel{name = <<"iq">>} = Stanza}, State) ->
 				{none, State}
 			end,
     if Reply /= none ->
-	    ejabberd_router:route(To, From, jlib:iq_to_xml(Reply));
+	    ejabberd_router:route(To, From, Reply);
        true ->
 	    ok
     end,
@@ -372,7 +379,7 @@ handle_info(Info, State) ->
     ?ERROR_MSG("Got unexpected info: ~p", [Info]),
     {noreply, State}.
 
--spec terminate(normal | shutdown | {shutdown, _} | _, _) -> ok.
+-spec terminate(normal | shutdown | {shutdown, _} | _, state()) -> ok.
 
 terminate(Reason, #state{server_host = ServerHost, host = Host}) ->
     ?DEBUG("Stopping HTTP upload process for ~s: ~p", [ServerHost, Reason]),
@@ -403,9 +410,8 @@ process(LocalPath, #request{method = Method, host = Host, ip = IP})
 process(_LocalPath, #request{method = 'PUT', host = Host, ip = IP,
 			     data = Data} = Request) ->
     {Proc, Slot} = parse_http_request(Request),
-    case catch gen_server:call(Proc, {use_slot, Slot}) of
-	{ok, Size, Path, FileMode, DirMode, GetPrefix, Thumbnail}
-	    when byte_size(Data) == Size ->
+    case catch gen_server:call(Proc, {use_slot, Slot, byte_size(Data)}) of
+	{ok, Path, FileMode, DirMode, GetPrefix, Thumbnail} ->
 	    ?DEBUG("Storing file from ~s for ~s: ~s",
 		   [?ADDR_TO_STR(IP), Host, Path]),
 	    case store_file(Path, Data, FileMode, DirMode,
@@ -419,13 +425,13 @@ process(_LocalPath, #request{method = 'PUT', host = Host, ip = IP,
 			       [Path, ?ADDR_TO_STR(IP), Host, ?FORMAT(Error)]),
 		    http_response(Host, 500)
 	    end;
-	{ok, Size, Path, _FileMode, _DirMode, _GetPrefix, _Thumbnail} ->
-	    ?INFO_MSG("Rejecting file ~s from ~s for ~s: Size is ~B, not ~B",
-		      [Path, ?ADDR_TO_STR(IP), Host, byte_size(Data), Size]),
+	{error, size_mismatch} ->
+	    ?INFO_MSG("Rejecting file from ~s for ~s: Unexpected size (~B)",
+		      [?ADDR_TO_STR(IP), Host, byte_size(Data)]),
 	    http_response(Host, 413);
-	{error, Error} ->
-	    ?INFO_MSG("Rejecting file from ~s for ~s: ~p",
-		      [?ADDR_TO_STR(IP), Host, Error]),
+	{error, invalid_slot} ->
+	    ?INFO_MSG("Rejecting file from ~s for ~s: Invalid slot",
+		      [?ADDR_TO_STR(IP), Host]),
 	    http_response(Host, 403);
 	Error ->
 	    ?ERROR_MSG("Cannot handle PUT request from ~s for ~s: ~p",
@@ -509,91 +515,59 @@ expand_home(Subject) ->
     Parts = binary:split(Subject, <<"@HOME@">>, [global]),
     str:join(Parts, list_to_binary(Home)).
 
+-spec expand_host(binary(), binary()) -> binary().
+
+expand_host(Subject, Host) ->
+    Parts = binary:split(Subject, <<"@HOST@">>, [global]),
+    str:join(Parts, Host).
+
 %%--------------------------------------------------------------------
 %% Internal functions.
 %%--------------------------------------------------------------------
 
 %% XMPP request handling.
 
--spec process_iq(jid(), iq_request() | reply | invalid, state())
-      -> {iq_reply(), state()} | iq_reply() | not_request.
+-spec process_iq(jid(), iq(), state()) -> {iq(), state()} | iq() | not_request.
 
 process_iq(_From,
-	   #iq{type = get, xmlns = ?NS_DISCO_INFO, lang = Lang} = IQ,
+	   #iq{type = get, lang = Lang, sub_els = [#disco_info{}]} = IQ,
 	   #state{server_host = ServerHost, name = Name}) ->
     AddInfo = ejabberd_hooks:run_fold(disco_info, ServerHost, [],
 				      [ServerHost, ?MODULE, <<"">>, <<"">>]),
-    IQ#iq{type = result,
-	  sub_el = [#xmlel{name = <<"query">>,
-			   attrs = [{<<"xmlns">>, ?NS_DISCO_INFO}],
-			   children = iq_disco_info(Lang, Name) ++ AddInfo}]};
-process_iq(From,
-	   #iq{type = get, xmlns = XMLNS, lang = Lang, sub_el = SubEl} = IQ,
-	   #state{server_host = ServerHost, access = Access} = State)
-    when XMLNS == ?NS_HTTP_UPLOAD;
-	 XMLNS == ?NS_HTTP_UPLOAD_OLD ->
+    xmpp:make_iq_result(IQ, iq_disco_info(ServerHost, Lang, Name, AddInfo));
+process_iq(From, #iq{type = get, lang = Lang,
+		     sub_els = [#upload_request{filename = File,
+						size = Size,
+						'content-type' = CType,
+						xmlns = XMLNS}]} = IQ,
+	   #state{server_host = ServerHost, access = Access} = State) ->
     case acl:match_rule(ServerHost, Access, From) of
 	allow ->
-	    case parse_request(SubEl, Lang) of
-		{ok, File, Size, ContentType} ->
-		    case create_slot(State, From, File, Size, ContentType,
-				     Lang) of
-			{ok, Slot} ->
-			    {ok, Timer} = timer:send_after(?SLOT_TIMEOUT,
-							   {slot_timed_out,
-							    Slot}),
-			    NewState = add_slot(Slot, Size, Timer, State),
-			    SlotEl = slot_el(Slot, State, XMLNS),
-			    {IQ#iq{type = result, sub_el = [SlotEl]}, NewState};
-			{ok, PutURL, GetURL} ->
-			    SlotEl = slot_el(PutURL, GetURL, XMLNS),
-			    IQ#iq{type = result, sub_el = [SlotEl]};
-			{error, Error} ->
-			    IQ#iq{type = error, sub_el = [SubEl, Error]}
-		    end;
+	    ContentType = yield_content_type(CType),
+	    case create_slot(State, From, File, Size, ContentType, Lang) of
+		{ok, Slot} ->
+		    {ok, Timer} = timer:send_after(?SLOT_TIMEOUT,
+						   {slot_timed_out,
+						    Slot}),
+		    NewState = add_slot(Slot, Size, Timer, State),
+		    NewSlot = mk_slot(Slot, State, XMLNS),
+		    {xmpp:make_iq_result(IQ, NewSlot), NewState};
+		{ok, PutURL, GetURL} ->
+		    Slot = mk_slot(PutURL, GetURL, XMLNS),
+		    xmpp:make_iq_result(IQ, Slot);
 		{error, Error} ->
-		    ?DEBUG("Cannot parse request from ~s",
-			   [jid:to_string(From)]),
-		    IQ#iq{type = error, sub_el = [SubEl, Error]}
+		    xmpp:make_error(IQ, Error)
 	    end;
 	deny ->
 	    ?DEBUG("Denying HTTP upload slot request from ~s",
 		   [jid:to_string(From)]),
-	    IQ#iq{type = error, sub_el = [SubEl, ?ERR_FORBIDDEN]}
+	    Txt = <<"Denied by ACL">>,
+	    xmpp:make_error(IQ, xmpp:err_forbidden(Txt, Lang))
     end;
-process_iq(_From, #iq{sub_el = SubEl} = IQ, _State) ->
-    IQ#iq{type = error, sub_el = [SubEl, ?ERR_NOT_ALLOWED]};
-process_iq(_From, reply, _State) ->
-    not_request;
-process_iq(_From, invalid, _State) ->
+process_iq(_From, #iq{type = T} = IQ, _State) when T == get; T == set ->
+    xmpp:make_error(IQ, xmpp:err_not_allowed());
+process_iq(_From, #iq{}, _State) ->
     not_request.
-
--spec parse_request(xmlel(), binary())
-      -> {ok, binary(), pos_integer(), binary()} | {error, xmlel()}.
-
-parse_request(#xmlel{name = <<"request">>, attrs = Attrs} = Request, Lang) ->
-    case fxml:get_attr(<<"xmlns">>, Attrs) of
-	{value, XMLNS} when XMLNS == ?NS_HTTP_UPLOAD;
-			    XMLNS == ?NS_HTTP_UPLOAD_OLD ->
-	    case {fxml:get_subtag_cdata(Request, <<"filename">>),
-		  fxml:get_subtag_cdata(Request, <<"size">>),
-		  fxml:get_subtag_cdata(Request, <<"content-type">>)} of
-		{File, SizeStr, ContentType} when byte_size(File) > 0 ->
-		    case catch jlib:binary_to_integer(SizeStr) of
-			Size when is_integer(Size), Size > 0 ->
-			    {ok, File, Size, yield_content_type(ContentType)};
-			_ ->
-			    Text = <<"Please specify file size.">>,
-			    {error, ?ERRT_BAD_REQUEST(Lang, Text)}
-		    end;
-		_ ->
-		    Text = <<"Please specify file name.">>,
-		    {error, ?ERRT_BAD_REQUEST(Lang, Text)}
-	    end;
-	_ ->
-	    {error, ?ERR_BAD_REQUEST}
-    end;
-parse_request(_El, _Lang) -> {error, ?ERR_BAD_REQUEST}.
 
 -spec create_slot(state(), jid(), binary(), pos_integer(), binary(), binary())
       -> {ok, slot()} | {ok, binary(), binary()} | {error, xmlel()}.
@@ -601,11 +575,10 @@ parse_request(_El, _Lang) -> {error, ?ERR_BAD_REQUEST}.
 create_slot(#state{service_url = undefined, max_size = MaxSize},
 	    JID, File, Size, _ContentType, Lang) when MaxSize /= infinity,
 						      Size > MaxSize ->
-    Text = <<"File larger than ", (jlib:integer_to_binary(MaxSize))/binary,
-	     " Bytes.">>,
+    Text = {<<"File larger than ~w bytes">>, [MaxSize]},
     ?INFO_MSG("Rejecting file ~s from ~s (too large: ~B bytes)",
 	      [File, jid:to_string(JID), Size]),
-    {error, ?ERRT_NOT_ACCEPTABLE(Lang, Text)};
+    {error, xmpp:err_not_acceptable(Text, Lang)};
 create_slot(#state{service_url = undefined,
 		   jid_in_url = JIDinURL,
 		   secret_length = SecretLength,
@@ -623,16 +596,16 @@ create_slot(#state{service_url = undefined,
 		      [jid:to_string(JID), File]),
 	    {ok, [UserStr, RandStr, FileStr]};
 	deny ->
-	    {error, ?ERR_SERVICE_UNAVAILABLE};
-	#xmlel{} = Error ->
+	    {error, xmpp:err_service_unavailable()};
+	#stanza_error{} = Error ->
 	    {error, Error}
     end;
 create_slot(#state{service_url = ServiceURL},
 	    #jid{luser = U, lserver = S} = JID, File, Size, ContentType,
-	    _Lang) ->
+	    Lang) ->
     Options = [{body_format, binary}, {full_result, false}],
     HttpOptions = [{timeout, ?SERVICE_REQUEST_TIMEOUT}],
-    SizeStr = jlib:integer_to_binary(Size),
+    SizeStr = integer_to_binary(Size),
     GetRequest = binary_to_list(ServiceURL) ++
 		     "?jid=" ++ ?URL_ENC(jid:to_string({U, S, <<"">>})) ++
 		     "&name=" ++ ?URL_ENC(File) ++
@@ -649,28 +622,29 @@ create_slot(#state{service_url = ServiceURL},
 		Lines ->
 		    ?ERROR_MSG("Can't parse data received for ~s from <~s>: ~p",
 			       [jid:to_string(JID), ServiceURL, Lines]),
-		    {error, ?ERR_SERVICE_UNAVAILABLE}
+		    Txt = <<"Failed to parse HTTP response">>,
+		    {error, xmpp:err_service_unavailable(Txt, Lang)}
 	    end;
 	{ok, {402, _Body}} ->
 	    ?INFO_MSG("Got status code 402 for ~s from <~s>",
 		      [jid:to_string(JID), ServiceURL]),
-	    {error, ?ERR_RESOURCE_CONSTRAINT};
+	    {error, xmpp:err_resource_constraint()};
 	{ok, {403, _Body}} ->
 	    ?INFO_MSG("Got status code 403 for ~s from <~s>",
 		      [jid:to_string(JID), ServiceURL]),
-	    {error, ?ERR_NOT_ALLOWED};
+	    {error, xmpp:err_not_allowed()};
 	{ok, {413, _Body}} ->
 	    ?INFO_MSG("Got status code 413 for ~s from <~s>",
 		      [jid:to_string(JID), ServiceURL]),
-	    {error, ?ERR_NOT_ACCEPTABLE};
+	    {error, xmpp:err_not_acceptable()};
 	{ok, {Code, _Body}} ->
 	    ?ERROR_MSG("Got unexpected status code for ~s from <~s>: ~B",
 		       [jid:to_string(JID), ServiceURL, Code]),
-	    {error, ?ERR_SERVICE_UNAVAILABLE};
+	    {error, xmpp:err_service_unavailable()};
 	{error, Reason} ->
 	    ?ERROR_MSG("Error requesting upload slot for ~s from <~s>: ~p",
 		       [jid:to_string(JID), ServiceURL, Reason]),
-	    {error, ?ERR_SERVICE_UNAVAILABLE}
+	    {error, xmpp:err_service_unavailable()}
     end.
 
 -spec add_slot(slot(), pos_integer(), timer:tref(), state()) -> state().
@@ -690,19 +664,15 @@ del_slot(Slot, #state{slots = Slots} = State) ->
     NewSlots = maps:remove(Slot, Slots),
     State#state{slots = NewSlots}.
 
--spec slot_el(slot() | binary(), state() | binary(), binary()) -> xmlel().
+-spec mk_slot(slot(), state(), binary()) -> upload_slot();
+	     (binary(), binary(), binary()) -> upload_slot().
 
-slot_el(Slot, #state{put_url = PutPrefix, get_url = GetPrefix}, XMLNS) ->
+mk_slot(Slot, #state{put_url = PutPrefix, get_url = GetPrefix}, XMLNS) ->
     PutURL = str:join([PutPrefix | Slot], <<$/>>),
     GetURL = str:join([GetPrefix | Slot], <<$/>>),
-    slot_el(PutURL, GetURL, XMLNS);
-slot_el(PutURL, GetURL, XMLNS) ->
-    #xmlel{name = <<"slot">>,
-	   attrs = [{<<"xmlns">>, XMLNS}],
-	   children = [#xmlel{name = <<"put">>,
-			      children = [{xmlcdata, PutURL}]},
-		       #xmlel{name = <<"get">>,
-			      children = [{xmlcdata, GetURL}]}]}.
+    mk_slot(PutURL, GetURL, XMLNS);
+mk_slot(PutURL, GetURL, XMLNS) ->
+    #upload_slot{get = GetURL, put = PutURL, xmlns = XMLNS}.
 
 -spec make_user_string(jid(), sha1 | node) -> binary().
 
@@ -737,28 +707,35 @@ map_int_to_char(N) when N =<  9 -> N + 48; % Digit.
 map_int_to_char(N) when N =< 35 -> N + 55; % Upper-case character.
 map_int_to_char(N) when N =< 61 -> N + 61. % Lower-case character.
 
--spec expand_host(binary(), binary()) -> binary().
-
-expand_host(Subject, Host) ->
-    Parts = binary:split(Subject, <<"@HOST@">>, [global]),
-    str:join(Parts, Host).
-
 -spec yield_content_type(binary()) -> binary().
 
 yield_content_type(<<"">>) -> ?DEFAULT_CONTENT_TYPE;
 yield_content_type(Type) -> Type.
 
--spec iq_disco_info(binary(), binary()) -> [xmlel()].
+-spec iq_disco_info(binary(), binary(), binary(), [xdata()]) -> [xmlel()].
 
-iq_disco_info(Lang, Name) ->
-    [#xmlel{name = <<"identity">>,
-	    attrs = [{<<"category">>, <<"store">>},
-		     {<<"type">>, <<"file">>},
-		     {<<"name">>, translate:translate(Lang, Name)}]},
-     #xmlel{name = <<"feature">>,
-	    attrs = [{<<"var">>, ?NS_HTTP_UPLOAD}]},
-     #xmlel{name = <<"feature">>,
-	    attrs = [{<<"var">>, ?NS_HTTP_UPLOAD_OLD}]}].
+iq_disco_info(Host, Lang, Name, AddInfo) ->
+    Form = case gen_mod:get_module_opt(Host, ?MODULE, max_size,
+				       fun(I) when is_integer(I), I > 0 -> I;
+					  (infinity) -> infinity
+				       end,
+				       104857600) of
+	       infinity ->
+		   AddInfo;
+	       MaxSize ->
+		   MaxSizeStr = integer_to_binary(MaxSize),
+		   Fields = [#xdata_field{type = hidden,
+					  var = <<"FORM_TYPE">>,
+					  values = [?NS_HTTP_UPLOAD]},
+			     #xdata_field{var = <<"max-file-size">>,
+					  values = [MaxSizeStr]}],
+		   [#xdata{type = result, fields = Fields}|AddInfo]
+	   end,
+    #disco_info{identities = [#identity{category = <<"store">>,
+					type = <<"file">>,
+					name = translate:translate(Lang, Name)}],
+		features = [?NS_HTTP_UPLOAD, ?NS_HTTP_UPLOAD_OLD],
+		xdata = Form}.
 
 %% HTTP request handling.
 
@@ -943,20 +920,14 @@ convert(Path, #media_info{type = T, width = W, height = H}) ->
 
 thumb_el(Path, URI) ->
     ContentType = guess_content_type(Path),
-    case identify(Path) of
-	{ok, #media_info{height = H, width = W}} ->
-	    #xmlel{name = <<"thumbnail">>,
-		   attrs = [{<<"xmlns">>, ?NS_THUMBS_1},
-			    {<<"media-type">>, ContentType},
-			    {<<"uri">>, URI},
-			    {<<"height">>, jlib:integer_to_binary(H)},
-			    {<<"width">>, jlib:integer_to_binary(W)}]};
-	pass ->
-	    #xmlel{name = <<"thumbnail">>,
-		   attrs = [{<<"xmlns">>, ?NS_THUMBS_1},
-			    {<<"uri">>, URI},
-			    {<<"media-type">>, ContentType}]}
-    end.
+    xmpp:encode(
+      case identify(Path) of
+	  {ok, #media_info{height = H, width = W}} ->
+	      #thumbnail{'media-type' = ContentType, uri = URI,
+			 height = H, width = W};
+	  pass ->
+	      #thumbnail{uri = URI, 'media-type' = ContentType}
+      end).
 
 %%--------------------------------------------------------------------
 %% Remove user.
@@ -974,8 +945,9 @@ remove_user(User, Server) ->
 					 (node) -> node
 				      end,
 				      sha1),
+    DocRoot1 = expand_host(expand_home(DocRoot), ServerHost),
     UserStr = make_user_string(jid:make(User, Server, <<"">>), JIDinURL),
-    UserDir = str:join([expand_home(DocRoot), UserStr], <<$/>>),
+    UserDir = str:join([DocRoot1, UserStr], <<$/>>),
     case del_tree(UserDir) of
 	ok ->
 	    ?INFO_MSG("Removed HTTP upload directory of ~s@~s", [User, Server]);

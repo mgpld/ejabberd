@@ -1,6 +1,6 @@
 %%%----------------------------------------------------------------------
 %%%
-%%% ejabberd, Copyright (C) 2002-2016   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -17,6 +17,7 @@
 %%% 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 %%%
 %%%----------------------------------------------------------------------
+
 -define(PRINT(Format, Args), io:format(Format, Args)).
 -compile([{parse_transform, lager_transform}]).
 
@@ -34,3 +35,10 @@
 
 -define(CRITICAL_MSG(Format, Args),
 	lager:critical(Format, Args)).
+
+%% Use only when trying to troubleshoot test problem with ExUnit
+-define(EXUNIT_LOG(Format, Args),
+        case lists:keyfind(logger, 1, application:loaded_applications()) of
+            false -> ok;
+            _ -> 'Elixir.Logger':bare_log(error, io_lib:format(Format, Args), [?MODULE])
+        end).

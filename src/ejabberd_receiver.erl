@@ -5,7 +5,7 @@
 %%% Created : 10 Nov 2003 by Alexey Shchepin <alexey@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2016   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -135,12 +135,13 @@ handle_call({starttls, TLSSocket}, _From, State) ->
 	{ok, TLSData} ->
 	    {reply, ok,
 		process_data(TLSData, NewState), ?HIBERNATE_TIMEOUT};
-	{error, _Reason} ->
-	    {stop, normal, ok, NewState}
+	{error, _} = Err ->
+	    {stop, normal, Err, NewState}
     end;
 handle_call({compress, Data}, _From,
 	    #state{socket = Socket, sock_mod = SockMod} =
 		State) ->
+    ejabberd:start_app(ezlib),
     {ok, ZlibSocket} = ezlib:enable_zlib(SockMod,
 						 Socket),
     if Data /= undefined -> do_send(State, Data);

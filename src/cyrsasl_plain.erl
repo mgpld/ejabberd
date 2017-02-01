@@ -5,7 +5,7 @@
 %%% Created :  8 Mar 2003 by Alexey Shchepin <alexey@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2016   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -27,17 +27,24 @@
 
 -author('alexey@process-one.net').
 
--export([start/1, stop/0, mech_new/4, mech_step/2, parse/1]).
+-export([start/1, stop/0, mech_new/4, mech_step/2, parse/1, format_error/1]).
 
 -behaviour(cyrsasl).
 
 -record(state, {check_password}).
+-type error_reason() :: parser_failed | not_authorized.
+-export_type([error_reason/0]).
 
 start(_Opts) ->
-    cyrsasl:register_mechanism(<<"PLAIN">>, ?MODULE, plain),
-    ok.
+    cyrsasl:register_mechanism(<<"PLAIN">>, ?MODULE, plain).
 
 stop() -> ok.
+
+-spec format_error(error_reason()) -> {atom(), binary()}.
+format_error(parser_failed) ->
+    {'bad-protocol', <<"Response decoding failed">>};
+format_error(not_authorized) ->
+    {'not-authorized', <<"Invalid username or password">>}.
 
 mech_new(_Host, _GetPassword, CheckPassword, _CheckPasswordDigest) ->
     {ok, #state{check_password = CheckPassword}}.
@@ -45,14 +52,14 @@ mech_new(_Host, _GetPassword, CheckPassword, _CheckPasswordDigest) ->
 mech_step(State, ClientIn) ->
     case prepare(ClientIn) of
       [AuthzId, User, Password] ->
-	  case (State#state.check_password)(User, Password) of
+	  case (State#state.check_password)(User, AuthzId, Password) of
 	    {true, AuthModule} ->
 		{ok,
 		 [{username, User}, {authzid, AuthzId},
 		  {auth_module, AuthModule}]};
-	    _ -> {error, <<"not-authorized">>, User}
+	    _ -> {error, not_authorized, User}
 	  end;
-      _ -> {error, <<"bad-protocol">>}
+      _ -> {error, parser_failed}
     end.
 
 prepare(ClientIn) ->
@@ -60,12 +67,17 @@ prepare(ClientIn) ->
       [<<"">>, UserMaybeDomain, Password] ->
 	  case parse_domain(UserMaybeDomain) of
 	    %% <NUL>login@domain<NUL>pwd
-	    [User, _Domain] -> [UserMaybeDomain, User, Password];
+	    [User, _Domain] -> [User, User, Password];
 	    %% <NUL>login<NUL>pwd
-	    [User] -> [<<"">>, User, Password]
+	    [User] -> [User, User, Password]
 	  end;
+      [AuthzId, User, Password] ->
+      case parse_domain(AuthzId) of
       %% login@domain<NUL>login<NUL>pwd
-      [AuthzId, User, Password] -> [AuthzId, User, Password];
+        [AuthzUser, _Domain] -> [AuthzUser, User, Password];
+        %% login<NUL>login<NUL>pwd
+        [AuthzUser] -> [AuthzUser, User, Password]
+      end;
       _ -> error
     end.
 

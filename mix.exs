@@ -3,19 +3,21 @@ defmodule Ejabberd.Mixfile do
 
   def project do
     [app: :ejabberd,
-     version: "16.01.0",
+     version: "17.01.0",
      description: description,
-     elixir: "~> 1.1",
+     elixir: "~> 1.3",
      elixirc_paths: ["lib"],
      compile_path: ".",
      compilers: [:asn1] ++ Mix.compilers,
      erlc_options: erlc_options,
      erlc_paths: ["asn1", "src"],
+     # Elixir tests are starting the part of ejabberd they need
+     aliases: [test: "test --no-start"],
      package: package,
      deps: deps]
   end
 
-  defp description do
+  def description do
     """
     Robust, ubiquitous and massively scalable Jabber / XMPP Instant Messaging platform.
     """
@@ -25,49 +27,89 @@ defmodule Ejabberd.Mixfile do
     [mod: {:ejabberd_app, []},
      applications: [:ssl],
      included_applications: [:lager, :mnesia, :p1_utils, :cache_tab,
-                             :fast_tls, :stringprep, :fast_xml,
-                             :stun, :fast_yaml, :ezlib, :iconv,
-                             :esip, :jiffy, :p1_oauth2, :p1_xmlrpc, :eredis,
-                             :p1_mysql, :p1_pgsql, :sqlite3]]
+                             :fast_tls, :stringprep, :fast_xml, :xmpp,
+                             :stun, :fast_yaml, :esip, :jiffy, :p1_oauth2]
+                         ++ cond_apps]
   end
 
   defp erlc_options do
     # Use our own includes + includes from all dependencies
-    includes = ["include"] ++ Path.wildcard(Path.join("..", "/*/include"))
-    [:debug_info] ++ Enum.map(includes, fn(path) -> {:i, path} end)
+    includes = ["include"] ++ deps_include(["fast_xml", "xmpp"])
+    [:debug_info, {:d, :ELIXIR_ENABLED}] ++ Enum.map(includes, fn(path) -> {:i, path} end)
   end
 
   defp deps do
-    [{:lager, "~> 3.0"},
+    [{:lager, "~> 3.2"},
      {:p1_utils, "~> 1.0"},
      {:cache_tab, "~> 1.0"},
      {:stringprep, "~> 1.0"},
      {:fast_yaml, "~> 1.0"},
      {:fast_tls, "~> 1.0"},
      {:fast_xml, "~> 1.1"},
+     {:xmpp, "~> 1.1"},
      {:stun, "~> 1.0"},
      {:esip, "~> 1.0"},
      {:jiffy, "~> 0.14.7"},
      {:p1_oauth2, "~> 0.6.1"},
-     {:p1_xmlrpc, "~> 1.15"},
-     {:p1_mysql, "~> 1.0"},
-     {:p1_pgsql, "~> 1.0"},
-     {:sqlite3, "~> 1.1"},
-     {:ezlib, "~> 1.0"},
-     {:iconv, "~> 1.0"},
-     {:eredis, "~> 1.0"},
-     {:exrm, "~> 1.0.0-rc7", only: :dev}]
+     {:distillery, "~> 1.0"},
+     {:ex_doc, ">= 0.0.0", only: :dev}]
+    ++ cond_deps
   end
 
-  defp package do
+  defp deps_include(deps) do
+    Enum.map(deps, fn dep -> "deps/#{dep}/include" end)
+  end
+
+  defp cond_deps do
+    for {:true, dep} <- [{config(:mysql), {:p1_mysql, "~> 1.0"}},
+                         {config(:pgsql), {:p1_pgsql, "~> 1.1"}},
+                         {config(:sqlite), {:sqlite3, "~> 1.1"}},
+                         {config(:riak), {:riakc, "~> 2.4"}},
+                         {config(:redis), {:eredis, "~> 1.0"}},
+                         {config(:zlib), {:ezlib, "~> 1.0"}},
+                         {config(:iconv), {:iconv, "~> 1.0"}},
+                         {config(:pam), {:epam, "~> 1.0"}},
+                         {config(:tools), {:luerl, github: "rvirding/luerl", tag: "v0.2"}},
+                         {config(:tools), {:meck, "~> 0.8.4"}},
+                         {config(:tools), {:moka, github: "processone/moka", tag: "1.0.5c"}}], do:
+      dep
+  end
+
+  defp cond_apps do
+    for {:true, app} <- [{config(:redis), :eredis},
+                         {config(:mysql), :p1_mysql},
+                         {config(:pgsql), :p1_pgsql},
+                         {config(:sqlite), :sqlite3},
+                         {config(:zlib), :ezlib},
+                         {config(:iconv), :iconv}], do:
+      app
+  end
+
+  def package do
     [# These are the default files included in the package
       files: ["lib", "src", "priv", "mix.exs", "include", "README.md", "COPYING"],
       maintainers: ["ProcessOne"],
       licenses: ["GPLv2"],
       links: %{"Site" => "https://www.ejabberd.im",
                "Documentation" => "http://docs.ejabberd.im",
-               "Source" => "https://github.com/processone/ejabberd"}]
+               "Source" => "https://github.com/processone/ejabberd",
+               "ProcessOne" => "http://www.process-one.net/"}]
   end
+
+  def vars do
+    case :file.consult("vars.config") do
+      {:ok,config} -> config
+      _ -> [zlib: true, iconv: true]
+    end
+  end
+
+  defp config(key) do
+    case vars[key] do
+      nil -> false
+      value -> value
+    end
+  end
+
 end
 
 defmodule Mix.Tasks.Compile.Asn1 do

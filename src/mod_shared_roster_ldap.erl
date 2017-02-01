@@ -7,7 +7,7 @@
 %%% Created :  5 Mar 2005 by Alexey Shchepin <alexey@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2016   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -39,24 +39,22 @@
 -export([init/1, handle_call/3, handle_cast/2,
 	 handle_info/2, terminate/2, code_change/3]).
 
--export([get_user_roster/2, get_subscription_lists/3,
+-export([get_user_roster/2, c2s_session_opened/1,
 	 get_jid_info/4, process_item/2, in_subscription/6,
-	 out_subscription/4, mod_opt_type/1, opt_type/1]).
+	 out_subscription/4, mod_opt_type/1, opt_type/1, depends/2]).
 
 -include("ejabberd.hrl").
 -include("logger.hrl").
--include("jlib.hrl").
+-include("xmpp.hrl").
 -include("mod_roster.hrl").
-
 -include("eldap.hrl").
 
+-define(SETS, gb_sets).
 -define(CACHE_SIZE, 1000).
-
--define(USER_CACHE_VALIDITY, 300).
-
+-define(USER_CACHE_VALIDITY, 300).  %% in seconds
 -define(GROUP_CACHE_VALIDITY, 300).
-
--define(LDAP_SEARCH_TIMEOUT, 5).
+-define(LDAP_SEARCH_TIMEOUT, 5).    %% Timeout for LDAP search queries in seconds
+-define(INVALID_SETTING_MSG, "~s is not properly set! ~s will not function.").
 
 -record(state,
 	{host = <<"">>                                :: binary(),
@@ -108,9 +106,13 @@ stop(Host) ->
     supervisor:terminate_child(ejabberd_sup, Proc),
     supervisor:delete_child(ejabberd_sup, Proc).
 
+depends(_Host, _Opts) ->
+    [{mod_roster, hard}].
+
 %%--------------------------------------------------------------------
 %% Hooks
 %%--------------------------------------------------------------------
+-spec get_user_roster([#roster{}], {binary(), binary()}) -> [#roster{}].
 get_user_roster(Items, {U, S} = US) ->
     SRUsers = get_user_to_groups_map(US, true),
     {NewItems1, SRUsersRest} = lists:mapfoldl(fun (Item,
@@ -143,6 +145,7 @@ get_user_roster(Items, {U, S} = US) ->
 
 %% This function in use to rewrite the roster entries when moving or renaming
 %% them in the user contact list.
+-spec process_item(#roster{}, binary()) -> #roster{}.
 process_item(RosterItem, _Host) ->
     USFrom = RosterItem#roster.us,
     {User, Server, _Resource} = RosterItem#roster.jid,
@@ -158,18 +161,25 @@ process_item(RosterItem, _Host) ->
       _ -> RosterItem#roster{subscription = both, ask = none}
     end.
 
-get_subscription_lists({F, T}, User, Server) ->
-    LUser = jid:nodeprep(User),
-    LServer = jid:nameprep(Server),
+c2s_session_opened(#{jid := #jid{luser = LUser, lserver = LServer},
+		     pres_f := PresF, pres_t := PresT} = State) ->
     US = {LUser, LServer},
     DisplayedGroups = get_user_displayed_groups(US),
-    SRUsers = lists:usort(lists:flatmap(fun (Group) ->
+    SRUsers = lists:flatmap(fun(Group) ->
 						get_group_users(LServer, Group)
 					end,
-					DisplayedGroups)),
-    SRJIDs = [{U1, S1, <<"">>} || {U1, S1} <- SRUsers],
-    {lists:usort(SRJIDs ++ F), lists:usort(SRJIDs ++ T)}.
+			    DisplayedGroups),
+    PresBoth = lists:foldl(
+		 fun({U, S, _}, Acc) ->
+			 ?SETS:add_element({U, S, <<"">>}, Acc);
+		    ({U, S}, Acc) ->
+			 ?SETS:add_element({U, S, <<"">>}, Acc)
+		 end, ?SETS:new(), SRUsers),
+    State#{pres_f => ?SETS:union(PresBoth, PresF),
+	   pres_t => ?SETS:union(PresBoth, PresT)}.
 
+-spec get_jid_info({subscription(), [binary()]}, binary(), binary(), jid())
+      -> {subscription(), [binary()]}.
 get_jid_info({Subscription, Groups}, User, Server,
 	     JID) ->
     LUser = jid:nodeprep(User),
@@ -187,10 +197,16 @@ get_jid_info({Subscription, Groups}, User, Server,
       error -> {Subscription, Groups}
     end.
 
+-spec in_subscription(boolean(), binary(), binary(), jid(),
+		      subscribe | subscribed | unsubscribe | unsubscribed,
+		      binary()) -> boolean().
 in_subscription(Acc, User, Server, JID, Type,
 		_Reason) ->
     process_subscription(in, User, Server, JID, Type, Acc).
 
+-spec out_subscription(
+	binary(), binary(), jid(),
+	subscribed | unsubscribed | subscribe | unsubscribe) -> boolean().
 out_subscription(User, Server, JID, Type) ->
     process_subscription(out, User, Server, JID, Type,
 			 false).
@@ -234,8 +250,8 @@ init([Host, Opts]) ->
 		       ?MODULE, in_subscription, 30),
     ejabberd_hooks:add(roster_out_subscription, Host,
 		       ?MODULE, out_subscription, 30),
-    ejabberd_hooks:add(roster_get_subscription_lists, Host,
-		       ?MODULE, get_subscription_lists, 70),
+    ejabberd_hooks:add(c2s_session_opened, Host,
+		       ?MODULE, c2s_session_opened, 70),
     ejabberd_hooks:add(roster_get_jid_info, Host, ?MODULE,
 		       get_jid_info, 70),
     ejabberd_hooks:add(roster_process_item, Host, ?MODULE,
@@ -263,8 +279,8 @@ terminate(_Reason, State) ->
 			  ?MODULE, in_subscription, 30),
     ejabberd_hooks:delete(roster_out_subscription, Host,
 			  ?MODULE, out_subscription, 30),
-    ejabberd_hooks:delete(roster_get_subscription_lists,
-			  Host, ?MODULE, get_subscription_lists, 70),
+    ejabberd_hooks:delete(c2s_session_opened,
+			  Host, ?MODULE, c2s_session_opened, 70),
     ejabberd_hooks:delete(roster_get_jid_info, Host,
 			  ?MODULE, get_jid_info, 70),
     ejabberd_hooks:delete(roster_process_item, Host,
@@ -334,12 +350,11 @@ get_group_users(Host, Group) ->
     {ok, State} = eldap_utils:get_state(Host, ?MODULE),
     case cache_tab:dirty_lookup(shared_roster_ldap_group,
 				{Group, Host},
-				fun () -> search_group_info(State, Group) end)
-	of
-      {ok, #group_info{members = Members}}
+				fun () -> search_group_info(State, Group) end) of
+        {ok, #group_info{members = Members}}
 	  when Members /= undefined ->
-	  Members;
-      _ -> []
+            Members;
+        _ -> []
     end.
 
 get_group_name(Host, Group) ->
@@ -381,79 +396,49 @@ search_group_info(State, Group) ->
 		    true -> fun ejabberd_auth:is_user_exists/2;
 		    _ -> fun (_U, _S) -> true end
 		  end,
-    Host = State#state.host,
     case eldap_search(State,
 		      [eldap_filter:do_sub(State#state.gfilter,
 					   [{<<"%g">>, Group}])],
 		      [State#state.group_attr, State#state.group_desc,
 		       State#state.uid])
 	of
-      [] -> error;
+        [] ->
+            error;
       LDAPEntries ->
-	  {GroupDesc, MembersLists} = lists:foldl(fun
-						    (#eldap_entry{attributes =
-								      Attrs},
-						     {DescAcc, JIDsAcc}) ->
-							case
-							  {eldap_utils:get_ldap_attr(State#state.group_attr,
-										     Attrs),
-							   eldap_utils:get_ldap_attr(State#state.group_desc,
-										     Attrs),
-							   lists:keysearch(State#state.uid,
-									   1,
-									   Attrs)}
-							    of
-							  {ID, Desc,
-							   {value,
-							    {GroupMemberAttr,
-							     Members}}}
-							      when ID /= <<"">>,
-								   GroupMemberAttr
-								     ==
-								     State#state.uid ->
-							      JIDs =
-								  lists:foldl(fun
-										({ok,
-										  UID},
-										 L) ->
-										    PUID =
-											jid:nodeprep(UID),
-										    case
-										      PUID
-											of
-										      error ->
-											  L;
-										      _ ->
-											  case
-											    AuthChecker(PUID,
-													Host)
-											      of
-											    true ->
-												[{PUID,
-												  Host}
-												 | L];
-											    _ ->
-												L
-											  end
-										    end;
-										(_,
-										 L) ->
-										    L
-									      end,
-									      [],
-									      lists:map(Extractor,
-											Members)),
-							      {Desc,
-							       [JIDs
-								| JIDsAcc]};
-							  _ ->
-							      {DescAcc, JIDsAcc}
-							end
-						  end,
-						  {Group, []}, LDAPEntries),
-	  {ok,
-	   #group_info{desc = GroupDesc,
-		       members = lists:usort(lists:flatten(MembersLists))}}
+          {GroupDesc, MembersLists} = lists:foldl(fun(Entry, Acc) ->
+                                                           extract_members(State, Extractor, AuthChecker, Entry, Acc)
+                                                   end,
+                                                   {Group, []}, LDAPEntries),
+	  {ok, #group_info{desc = GroupDesc, members = lists:usort(lists:flatten(MembersLists))}}
+    end.
+
+extract_members(State, Extractor, AuthChecker, #eldap_entry{attributes = Attrs}, {DescAcc, JIDsAcc}) ->
+    Host = State#state.host,
+    case {eldap_utils:get_ldap_attr(State#state.group_attr, Attrs),
+          eldap_utils:get_ldap_attr(State#state.group_desc, Attrs),
+          lists:keysearch(State#state.uid, 1, Attrs)} of
+        {ID, Desc, {value, {GroupMemberAttr, Members}}} when ID /= <<"">>,
+                                                             GroupMemberAttr == State#state.uid ->
+            JIDs = lists:foldl(fun({ok, UID}, L) ->
+                                       PUID = jid:nodeprep(UID),
+                                       case PUID of
+                                           error ->
+                                               L;
+                                           _ ->
+                                               case AuthChecker(PUID, Host) of
+                                                   true ->
+                                                       [{PUID, Host} | L];
+                                                   _ ->
+                                                       L
+                                               end
+                                       end;
+                                  (_, L) -> L
+                               end,
+                               [],
+                               lists:map(Extractor, Members)),
+            {Desc, [JIDs | JIDsAcc]};
+        _ ->
+            {DescAcc, JIDsAcc}
     end.
 
 search_user_name(State, User) ->

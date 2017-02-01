@@ -5,7 +5,7 @@
 %%% Created : 31 Jan 2003 by Alexey Shchepin <alexey@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2016   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -30,7 +30,7 @@
 
 -behaviour(application).
 
--export([start_modules/0, start/2, prep_stop/1, stop/1,
+-export([start/2, prep_stop/1, stop/1,
 	 init/0, opt_type/1]).
 
 -include("ejabberd.hrl").
@@ -43,18 +43,18 @@
 start(normal, _Args) ->
     ejabberd_logger:start(),
     write_pid_file(),
-    jid:start(),
     start_apps(),
+    start_elixir_application(),
     ejabberd:check_app(ejabberd),
     randoms:start(),
     db_init(),
     start(),
     translate:start(),
+    ejabberd_access_permissions:start_link(),
     ejabberd_ctl:init(),
     ejabberd_commands:init(),
     ejabberd_admin:start(),
-    gen_mod:start(),
-    ext_mod:start(),
+    setup_if_elixir_conf_used(),
     ejabberd_config:start(),
     set_settings_from_config(),
     acl:start(),
@@ -64,16 +64,20 @@ start(normal, _Args) ->
     gtm:start(),
     ejabberd_rdbms:start(),
     ejabberd_riak_sup:start(),
+    ejabberd_redis:start(),
+    ejabberd_router:start(),
+    ejabberd_router_multicast:start(),
+    ejabberd_local:start(),
     ejabberd_sm:start(),
     cyrsasl:start(),
-    % Profiling
-    %ejabberd_debug:eprof_start(),
-    %ejabberd_debug:fprof_start(),
+    gen_mod:start(),
+    ext_mod:start(),
     maybe_add_nameservers(),
     ejabberd_auth:start(),
     ejabberd_oauth:start(),
-    start_modules(),
+    gen_mod:start_modules(),
     ejabberd_listener:start_listeners(),
+    register_elixir_config_hooks(),
     ?INFO_MSG("ejabberd ~s is started in the node ~p", [?VERSION, node()]),
     Sup;
 start(_, _) ->
@@ -84,9 +88,9 @@ start(_, _) ->
 %% before shutting down the processes of the application.
 prep_stop(State) ->
     ejabberd_listener:stop_listeners(),
-    stop_modules(),
     ejabberd_admin:stop(),
     broadcast_c2s_shutdown(),
+    gen_mod:stop_modules(),
     timer:sleep(5000),
     State.
 
@@ -138,42 +142,6 @@ db_init() ->
     ejabberd:start_app(mnesia, permanent),
     mnesia:wait_for_tables(mnesia:system_info(local_tables), infinity).
 
-%% Start all the modules in all the hosts
-start_modules() ->
-    lists:foreach(
-      fun(Host) ->
-              Modules = ejabberd_config:get_option(
-                          {modules, Host},
-                          fun(Mods) ->
-                                  lists:map(
-                                    fun({M, A}) when is_atom(M), is_list(A) ->
-                                            {M, A}
-                                    end, Mods)
-                          end, []),
-              lists:foreach(
-                fun({Module, Args}) ->
-                        gen_mod:start_module(Host, Module, Args)
-                end, Modules)
-      end, ?MYHOSTS).
-
-%% Stop all the modules in all the hosts
-stop_modules() ->
-    lists:foreach(
-      fun(Host) ->
-              Modules = ejabberd_config:get_option(
-                          {modules, Host},
-                          fun(Mods) ->
-                                  lists:map(
-                                    fun({M, A}) when is_atom(M), is_list(A) ->
-                                            {M, A}
-                                    end, Mods)
-                          end, []),
-              lists:foreach(
-                fun({Module, _Args}) ->
-                        gen_mod:stop_module_keep_config(Host, Module)
-                end, Modules)
-      end, ?MYHOSTS).
-
 connect_nodes() ->
     Nodes = ejabberd_config:get_option(
               cluster_nodes,
@@ -202,7 +170,7 @@ broadcast_c2s_shutdown() ->
     Children = ejabberd_sm:get_all_pids(),
     lists:foreach(
       fun(C2SPid) when node(C2SPid) == node() ->
-	      C2SPid ! system_shutdown;
+	      ejabberd_c2s:send(C2SPid, xmpp:serr_system_shutdown());
 	 (_) ->
 	      ok
       end, Children).
@@ -255,9 +223,7 @@ start_apps() ->
     ejabberd:start_app(ssl),
     ejabberd:start_app(fast_yaml),
     ejabberd:start_app(fast_tls),
-    ejabberd:start_app(fast_xml),
-    ejabberd:start_app(stringprep),
-    ejabberd:start_app(ezlib),
+    ejabberd:start_app(xmpp),
     ejabberd:start_app(cache_tab).
 
 opt_type(net_ticktime) ->
@@ -274,3 +240,26 @@ opt_type(modules) ->
 		      Mods)
     end;
 opt_type(_) -> [cluster_nodes, loglevel, modules, net_ticktime].
+
+setup_if_elixir_conf_used() ->
+  case ejabberd_config:is_using_elixir_config() of
+    true -> 'Elixir.Ejabberd.Config.Store':start_link();
+    false -> ok
+  end.
+
+register_elixir_config_hooks() ->
+  case ejabberd_config:is_using_elixir_config() of
+    true -> 'Elixir.Ejabberd.Config':start_hooks();
+    false -> ok
+  end.
+
+start_elixir_application() ->
+    case ejabberd_config:is_elixir_enabled() of
+	true ->
+	    case application:ensure_started(elixir) of
+		ok -> ok;
+		{error, _Msg} -> ?ERROR_MSG("Elixir application not started.", [])
+	    end;
+	_ ->
+	    ok
+    end.

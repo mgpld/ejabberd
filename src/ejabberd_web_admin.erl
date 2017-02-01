@@ -5,7 +5,7 @@
 %%% Created :  9 Apr 2004 by Alexey Shchepin <alexey@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2016   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2017   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -38,7 +38,7 @@
 -include("ejabberd.hrl").
 -include("logger.hrl").
 
--include("jlib.hrl").
+-include("xmpp.hrl").
 
 -include("ejabberd_http.hrl").
 
@@ -74,20 +74,27 @@ get_acl_rule([<<"vhosts">>], _) ->
 %% The pages of a vhost are only accesible if the user is admin of that vhost:
 get_acl_rule([<<"server">>, VHost | _RPath], Method)
     when Method =:= 'GET' orelse Method =:= 'HEAD' ->
-    {VHost, [configure, webadmin_view]};
+    AC = gen_mod:get_module_opt(VHost, ejabberd_web_admin,
+				access, fun(A) -> A end, configure),
+    ACR = gen_mod:get_module_opt(VHost, ejabberd_web_admin,
+				 access_readonly, fun(A) -> A end, webadmin_view),
+    {VHost, [AC, ACR]};
 get_acl_rule([<<"server">>, VHost | _RPath], 'POST') ->
-    {VHost, [configure]};
+    AC = gen_mod:get_module_opt(VHost, ejabberd_web_admin,
+				access, fun(A) -> A end, configure),
+    {VHost, [AC]};
 %% Default rule: only global admins can access any other random page
 get_acl_rule(_RPath, Method)
     when Method =:= 'GET' orelse Method =:= 'HEAD' ->
-    {global, [configure, webadmin_view]};
-get_acl_rule(_RPath, 'POST') -> {global, [configure]}.
-
-is_acl_match(Host, Rules, Jid) ->
-    lists:any(fun (Rule) ->
-		      allow == acl:match_rule(Host, Rule, Jid)
-	      end,
-	      Rules).
+    AC = gen_mod:get_module_opt(global, ejabberd_web_admin,
+				access, fun(A) -> A end, configure),
+    ACR = gen_mod:get_module_opt(global, ejabberd_web_admin,
+				 access_readonly, fun(A) -> A end, webadmin_view),
+    {global, [AC, ACR]};
+get_acl_rule(_RPath, 'POST') ->
+    AC = gen_mod:get_module_opt(global, ejabberd_web_admin,
+				access, fun(A) -> A end, configure),
+    {global, [AC]}.
 
 %%%==================================
 %%%% Menu Items Access
@@ -138,7 +145,7 @@ is_allowed_path([<<"admin">> | Path], JID) ->
     is_allowed_path(Path, JID);
 is_allowed_path(Path, JID) ->
     {HostOfRule, AccessRule} = get_acl_rule(Path, 'GET'),
-    is_acl_match(HostOfRule, AccessRule, JID).
+    acl:any_rules_allowed(HostOfRule, AccessRule, JID).
 
 %% @spec(Path) -> URL
 %% where Path = [string()]
@@ -185,7 +192,7 @@ process([<<"server">>, SHost | RPath] = Path,
 		 method = Method} =
 	    Request) ->
     Host = jid:nameprep(SHost),
-    case lists:member(Host, ?MYHOSTS) of
+    case ejabberd_router:is_my_host(Host) of
       true ->
 	  case get_auth_admin(Auth, HostHTTP, Path, Method) of
 	    {ok, {User, Server}} ->
@@ -264,9 +271,9 @@ get_auth_admin(Auth, HostHTTP, RPath, Method) ->
 
 get_auth_account(HostOfRule, AccessRule, User, Server,
 		 Pass) ->
-    case ejabberd_auth:check_password(User, Server, Pass) of
+    case ejabberd_auth:check_password(User, <<"">>, Server, Pass) of
       true ->
-	  case is_acl_match(HostOfRule, AccessRule,
+	  case acl:any_rules_allowed(HostOfRule, AccessRule,
 			    jid:make(User, Server, <<"">>))
 	      of
 	    false -> {unauthorized, <<"unprivileged-account">>};
@@ -342,7 +349,7 @@ make_xhtml(Els, Host, Node, Lang, JID) ->
 			   [?XAE(<<"div">>, [{<<"id">>, <<"copyright">>}],
 				 [?XE(<<"p">>,
 				  [?AC(<<"https://www.ejabberd.im/">>, <<"ejabberd">>),
-				   ?C(<<" (c) 2002-2016 ">>),
+				   ?C(<<" (c) 2002-2017 ">>),
 				   ?AC(<<"https://www.process-one.net/">>, <<"ProcessOne, leader in messaging and push solutions">>)]
                                  )])])])]}}.
 
@@ -382,6 +389,9 @@ css(Host) ->
     "  height: 100%;\n"
     "  background: #f9f9f9;\n"
     "  font-family: sans-serif;\n"
+    "}\n"
+    "body {\n"
+    "  min-width: 990px;\n"
     "}\n"
     "a {\n"
     "  text-decoration: none;\n"
@@ -461,13 +471,15 @@ css(Host) ->
     "  font-size: 0.75em;\n"
     "  text-align: center;\n"
     "}\n"
+    "#navigation {\n"
+    "  display: inline-block;\n"
+    "  vertical-align: top;\n"
+    "  width: 30%;\n"
+    "}\n"
     "#navigation ul {\n"
-    "  position: absolute;\n"
-    "  top: 75px;\n"
-    "  left: 0;\n"
     "  padding: 0;\n"
     "  margin: 0;\n"
-    "  width: 17em;\n"
+    "  width: 90%;\n"
     "  background: #fff;\n"
     "}\n"
     "#navigation ul li {\n"
@@ -510,6 +522,9 @@ css(Host) ->
     "}\n"
     "thead tr td {\n"
     "  background: #3eaffa;\n"
+    "  color: #fff;\n"
+    "}\n"
+    "thead tr td a {\n"
     "  color: #fff;\n"
     "}\n"
     "td.copy {\n"
@@ -592,8 +607,10 @@ css(Host) ->
     "  list-style-type: none;\n"
     "}\n"
     "#content {\n"
-    "  padding-left: 19em;\n"
+    "  display: inline-block;\n"
+    "  vertical-align: top;\n"
     "  padding-top: 25px;\n"
+    "  width: 70%;\n"
     "}\n"
     "div.guidelink,\n"
     "p[dir=ltr] {\n"
@@ -730,12 +747,12 @@ process_admin(Host,
 	    _ -> nothing
 	  end,
     ACLs = lists:keysort(2,
-			 ets:select(acl,
+			 mnesia:dirty_select(acl,
 				    [{{acl, {'$1', Host}, '$2'}, [],
 				      [{{acl, '$1', '$2'}}]}])),
     {NumLines, ACLsP} = term_to_paragraph(ACLs, 80),
     make_xhtml((?H1GL((?T(<<"Access Control Lists">>)),
-		      <<"acl-definition">>, <<"ACL Definition">>))
+		      <<"acldefinition">>, <<"ACL Definition">>))
 		 ++
 		 case Res of
 		   ok -> [?XREST(<<"Submitted">>)];
@@ -746,8 +763,8 @@ process_admin(Host,
 		   [?XAE(<<"form">>,
 			 [{<<"action">>, <<"">>}, {<<"method">>, <<"post">>}]++direction(ltr),
 			 [?TEXTAREA(<<"acls">>,
-				    (iolist_to_binary(integer_to_list(lists:max([16,
-										 NumLines])))),
+				    (integer_to_binary(lists:max([16,
+										 NumLines]))),
 				    <<"80">>, <<(iolist_to_binary(ACLsP))/binary, ".">>),
 			  ?BR,
 			  ?INPUTT(<<"submit">>, <<"submit">>, <<"Submit">>)])],
@@ -767,11 +784,11 @@ process_admin(Host,
 	    _ -> nothing
 	  end,
     ACLs = lists:keysort(2,
-			 ets:select(acl,
+			 mnesia:dirty_select(acl,
 				    [{{acl, {'$1', Host}, '$2'}, [],
 				      [{{acl, '$1', '$2'}}]}])),
     make_xhtml((?H1GL((?T(<<"Access Control Lists">>)),
-		      <<"acl-definition">>, <<"ACL Definition">>))
+		      <<"acldefinition">>, <<"ACL Definition">>))
 		 ++
 		 case Res of
 		   ok -> [?XREST(<<"Submitted">>)];
@@ -832,12 +849,12 @@ process_admin(Host,
 		end;
 	    _ -> nothing
 	  end,
-    Access = ets:select(access,
+    Access = mnesia:dirty_select(access,
 			[{{access, {'$1', Host}, '$2'}, [],
 			  [{{access, '$1', '$2'}}]}]),
     {NumLines, AccessP} = term_to_paragraph(lists:keysort(2,Access), 80),
     make_xhtml((?H1GL((?T(<<"Access Rules">>)),
-		      <<"access-rights">>, <<"Access Rights">>))
+		      <<"accessrights">>, <<"Access Rights">>))
 		 ++
 		 case Res of
 		   ok -> [?XREST(<<"Submitted">>)];
@@ -848,8 +865,8 @@ process_admin(Host,
 		   [?XAE(<<"form">>,
 			 [{<<"action">>, <<"">>}, {<<"method">>, <<"post">>}]++direction(ltr),
 			 [?TEXTAREA(<<"access">>,
-				    (iolist_to_binary(integer_to_list(lists:max([16,
-										 NumLines])))),
+				    (integer_to_binary(lists:max([16,
+										 NumLines]))),
 				    <<"80">>, <<(iolist_to_binary(AccessP))/binary, ".">>),
 			  ?BR,
 			  ?INPUTT(<<"submit">>, <<"submit">>, <<"Submit">>)])],
@@ -866,11 +883,11 @@ process_admin(Host,
 		end;
 	    _ -> nothing
 	  end,
-    AccessRules = ets:select(access,
+    AccessRules = mnesia:dirty_select(access,
 			     [{{access, {'$1', Host}, '$2'}, [],
 			       [{{access, '$1', '$2'}}]}]),
     make_xhtml((?H1GL((?T(<<"Access Rules">>)),
-		      <<"access-rights">>, <<"Access Rights">>))
+		      <<"accessrights">>, <<"Access Rights">>))
 		 ++
 		 case Res of
 		   ok -> [?XREST(<<"Submitted">>)];
@@ -909,7 +926,7 @@ process_admin(Host,
 	      Rs1 -> Rs1
 	    end,
     make_xhtml([?XC(<<"h1">>,
-		    list_to_binary(io_lib:format(
+		    (str:format(
                                      ?T(<<"~s access rule configuration">>),
                                      [SName])))]
 		 ++
@@ -929,7 +946,7 @@ process_admin(global,
 		       lang = Lang}) ->
     Res = list_vhosts(Lang, AJID),
     make_xhtml((?H1GL((?T(<<"Virtual Hosts">>)),
-		      <<"virtual-hosting">>, <<"Virtual Hosting">>))
+		      <<"virtualhosting">>, <<"Virtual Hosting">>))
 		 ++ Res,
 	       global, Lang, AJID);
 process_admin(Host,
@@ -1035,17 +1052,21 @@ process_admin(Host,
 process_admin(Host,
 	      #request{lang = Lang, auth = {_, _Auth, AJID}} =
 		  Request) ->
-    {Hook, Opts} = case Host of
-		     global -> {webadmin_page_main, [Request]};
-		     Host -> {webadmin_page_host, [Host, Request]}
-		   end,
-    case ejabberd_hooks:run_fold(Hook, Host, [], Opts) of
+    Res = case Host of
+	      global ->
+		  ejabberd_hooks:run_fold(
+		    webadmin_page_main, Host, [], [Request]);
+	      _ ->
+		  ejabberd_hooks:run_fold(
+		    webadmin_page_host, Host, [], [Host, Request])
+	  end,
+    case Res of
       [] ->
 	  setelement(1,
 		     make_xhtml([?XC(<<"h1">>, <<"Not Found">>)], Host, Lang,
 				AJID),
 		     404);
-      Res -> make_xhtml(Res, Host, Lang, AJID)
+      _ -> make_xhtml(Res, Host, Lang, AJID)
     end.
 
 %%%==================================
@@ -1120,7 +1141,7 @@ acl_spec_select(ID, Opt) ->
 %% @spec (T::any()) -> StringLine::string()
 term_to_string(T) ->
     StringParagraph =
-	iolist_to_binary(io_lib:format("~1000000p", [T])),
+	(str:format("~1000000p", [T])),
     ejabberd_regexp:greplace(StringParagraph, <<"\\n ">>,
 			     <<"">>).
 
@@ -1136,7 +1157,7 @@ term_to_paragraph(T, Cols) ->
 term_to_id(T) -> jlib:encode_base64((term_to_binary(T))).
 
 acl_parse_query(Host, Query) ->
-    ACLs = ets:select(acl,
+    ACLs = mnesia:dirty_select(acl,
 		      [{{acl, {'$1', Host}, '$2'}, [],
 			[{{acl, '$1', '$2'}}]}]),
     case lists:keysearch(<<"submit">>, 1, Query) of
@@ -1250,7 +1271,7 @@ access_rules_to_xhtml(AccessRules, Lang) ->
 				    <<"Add New">>)])])]))]).
 
 access_parse_query(Host, Query) ->
-    AccessRules = ets:select(access,
+    AccessRules = mnesia:dirty_select(access,
 			     [{{access, {'$1', Host}, '$2'}, [],
 			       [{{access, '$1', '$2'}}]}]),
     case lists:keysearch(<<"addnew">>, 1, Query) of
@@ -1323,7 +1344,7 @@ parse_access_rule(Text) ->
 list_vhosts(Lang, JID) ->
     Hosts = (?MYHOSTS),
     HostsAllowed = lists:filter(fun (Host) ->
-					is_acl_match(Host,
+					acl:any_rules_allowed(Host,
 						     [configure, webadmin_view],
 						     JID)
 				end,
@@ -1444,8 +1465,8 @@ list_users_in_diapason(Host, Diap, Lang, URLFunc) ->
     Users = ejabberd_auth:get_vh_registered_users(Host),
     SUsers = lists:sort([{S, U} || {U, S} <- Users]),
     [S1, S2] = ejabberd_regexp:split(Diap, <<"-">>),
-    N1 = jlib:binary_to_integer(S1),
-    N2 = jlib:binary_to_integer(S2),
+    N1 = binary_to_integer(S1),
+    N2 = binary_to_integer(S2),
     Sub = lists:sublist(SUsers, N1, N2 - N1 + 1),
     [list_given_users(Host, Sub, <<"../../">>, Lang,
 		      URLFunc)].
@@ -1485,7 +1506,7 @@ list_given_users(Host, Users, Prefix, Lang, URLFunc) ->
 						    {{Year, Month, Day},
 						     {Hour, Minute, Second}} =
 							calendar:now_to_local_time(TimeStamp),
-						    iolist_to_binary(io_lib:format("~w-~.2.0w-~.2.0w ~.2.0w:~.2.0w:~.2.0w",
+						    (str:format("~w-~.2.0w-~.2.0w ~.2.0w:~.2.0w:~.2.0w",
 										   [Year,
 										    Month,
 										    Day,
@@ -1510,8 +1531,7 @@ get_offlinemsg_length(ModOffline, User, Server) ->
     case ModOffline of
       none -> <<"disabled">>;
       _ ->
-	  pretty_string_int(ModOffline:get_queue_length(User,
-							Server))
+	  pretty_string_int(ModOffline:count_offline_messages(User,Server))
     end.
 
 get_offlinemsg_module(Server) ->
@@ -1536,7 +1556,7 @@ su_to_list({Server, User}) ->
 %%%% get_stats
 
 get_stats(global, Lang) ->
-    OnlineUsers = mnesia:table_info(session, size),
+    OnlineUsers = ejabberd_sm:connected_users_number(),
     RegisteredUsers = lists:foldl(fun (Host, Total) ->
 					  ejabberd_auth:get_vh_registered_users_number(Host)
 					    + Total
@@ -1635,7 +1655,7 @@ user_info(User, Server, Query, Lang) ->
                                                 "://",
                                                 (jlib:ip_to_list(IP))/binary,
                                                 ":",
-                                                (jlib:integer_to_binary(Port))/binary,
+                                                (integer_to_binary(Port))/binary,
                                                 "#",
                                                 (jlib:atom_to_binary(Node))/binary>>
                                       end,
@@ -1663,14 +1683,14 @@ user_info(User, Server, Query, Lang) ->
 					    Shift rem 1000000, 0},
 			       {{Year, Month, Day}, {Hour, Minute, Second}} =
 				   calendar:now_to_local_time(TimeStamp),
-			       iolist_to_binary(io_lib:format("~w-~.2.0w-~.2.0w ~.2.0w:~.2.0w:~.2.0w",
+			       (str:format("~w-~.2.0w-~.2.0w ~.2.0w:~.2.0w:~.2.0w",
 							      [Year, Month, Day,
 							       Hour, Minute,
 							       Second]))
 			 end;
 		     _ -> ?T(<<"Online">>)
 		   end,
-    [?XC(<<"h1">>, list_to_binary(io_lib:format(?T(<<"User ~s">>),
+    [?XC(<<"h1">>, (str:format(?T(<<"User ~s">>),
                                                 [us_to_list(US)])))]
       ++
       case Res of
@@ -1753,9 +1773,7 @@ list_last_activity(Host, Lang, Integral, Period) ->
 		       [?XAE(<<"li">>,
 			     [{<<"style">>,
 			       <<"width:",
-				 (iolist_to_binary(integer_to_list(trunc(90 * V
-									   /
-									   Max))))/binary,
+				 (integer_to_binary(trunc(90 * V / Max)))/binary,
 				 "%;">>}],
 			     [{xmlcdata, pretty_string_int(V)}])
 			|| V <- Hist ++ Tail])]
@@ -1787,9 +1805,8 @@ histogram([], _Integral, _Current, Count, Hist) ->
 %%%% get_nodes
 
 get_nodes(Lang) ->
-    RunningNodes = mnesia:system_info(running_db_nodes),
-    StoppedNodes = lists:usort(mnesia:system_info(db_nodes)
-				 ++ mnesia:system_info(extra_db_nodes))
+    RunningNodes = ejabberd_cluster:get_nodes(),
+    StoppedNodes = ejabberd_cluster:get_known_nodes()
 		     -- RunningNodes,
     FRN = if RunningNodes == [] -> ?CT(<<"None">>);
 	     true ->
@@ -1815,8 +1832,8 @@ get_nodes(Lang) ->
      ?XCT(<<"h3">>, <<"Stopped Nodes">>), FSN].
 
 search_running_node(SNode) ->
-    search_running_node(SNode,
-			mnesia:system_info(running_db_nodes)).
+    RunningNodes = ejabberd_cluster:get_nodes(),
+    search_running_node(SNode, RunningNodes).
 
 search_running_node(_, []) -> false;
 search_running_node(SNode, [Node | Nodes]) ->
@@ -1830,7 +1847,7 @@ get_node(global, Node, [], Query, Lang) ->
     Base = get_base_path(global, Node),
     MenuItems2 = make_menu_items(global, Node, Base, Lang),
     [?XC(<<"h1">>,
-	 list_to_binary(io_lib:format(?T(<<"Node ~p">>), [Node])))]
+	 (str:format(?T(<<"Node ~p">>), [Node])))]
       ++
       case Res of
 	ok -> [?XREST(<<"Submitted">>)];
@@ -1855,7 +1872,7 @@ get_node(global, Node, [], Query, Lang) ->
 get_node(Host, Node, [], _Query, Lang) ->
     Base = get_base_path(Host, Node),
     MenuItems2 = make_menu_items(Host, Node, Base, Lang),
-    [?XC(<<"h1">>, list_to_binary(io_lib:format(?T(<<"Node ~p">>), [Node]))),
+    [?XC(<<"h1">>, (str:format(?T(<<"Node ~p">>), [Node]))),
      ?XE(<<"ul">>,
 	 ([?LI([?ACT(<<Base/binary, "modules/">>,
 		     <<"Modules">>)])]
@@ -1914,7 +1931,7 @@ get_node(global, Node, [<<"db">>], Query, Lang) ->
 			   end,
 			   STables),
 	  [?XC(<<"h1">>,
-	       list_to_binary(io_lib:format(?T(<<"Database Tables at ~p">>),
+	       (str:format(?T(<<"Database Tables at ~p">>),
                                             [Node]))
 	  )]
 	    ++
@@ -1950,9 +1967,9 @@ get_node(global, Node, [<<"backup">>], Query, Lang) ->
 	     ok -> [?XREST(<<"Submitted">>)];
 	     {error, Error} ->
 		 [?XRES(<<(?T(<<"Error">>))/binary, ": ",
-			  (list_to_binary(io_lib:format("~p", [Error])))/binary>>)]
+			  ((str:format("~p", [Error])))/binary>>)]
 	   end,
-    [?XC(<<"h1">>, list_to_binary(io_lib:format(?T(<<"Backup of ~p">>), [Node])))]
+    [?XC(<<"h1">>, (str:format(?T(<<"Backup of ~p">>), [Node])))]
       ++
       ResS ++
 	[?XCT(<<"p">>,
@@ -2104,7 +2121,7 @@ get_node(global, Node, [<<"ports">>], Query, Lang) ->
 	    {'EXIT', _Reason} -> error;
 	    {is_added, ok} -> ok;
 	    {is_added, {error, Reason}} ->
-		{error, iolist_to_binary(io_lib:format("~p", [Reason]))};
+		{error, (str:format("~p", [Reason]))};
 	    _ -> nothing
 	  end,
     NewPorts = lists:sort(ejabberd_cluster:call(Node, ejabberd_config,
@@ -2114,7 +2131,7 @@ get_node(global, Node, [<<"ports">>], Query, Lang) ->
                                     []])),
     H1String = <<(?T(<<"Listened Ports at ">>))/binary,
 		 (iolist_to_binary(atom_to_list(Node)))/binary>>,
-    (?H1GL(H1String, <<"listening-ports">>, <<"Listening Ports">>))
+    (?H1GL(H1String, <<"listeningports">>, <<"Listening Ports">>))
       ++
       case Res of
 	ok -> [?XREST(<<"Submitted">>)];
@@ -2141,8 +2158,8 @@ get_node(Host, Node, [<<"modules">>], Query, Lang)
 	  end,
     NewModules = lists:sort(ejabberd_cluster:call(Node, gen_mod,
 				     loaded_modules_with_opts, [Host])),
-    H1String = list_to_binary(io_lib:format(?T(<<"Modules at ~p">>), [Node])),
-    (?H1GL(H1String, <<"modules-overview">>,
+    H1String = (str:format(?T(<<"Modules at ~p">>), [Node])),
+    (?H1GL(H1String, <<"modulesoverview">>,
 	   <<"Modules Overview">>))
       ++
       case Res of
@@ -2157,12 +2174,12 @@ get_node(Host, Node, [<<"modules">>], Query, Lang)
 get_node(global, Node, [<<"stats">>], _Query, Lang) ->
     UpTime = ejabberd_cluster:call(Node, erlang, statistics,
 		      [wall_clock]),
-    UpTimeS = list_to_binary(io_lib:format("~.3f",
+    UpTimeS = (str:format("~.3f",
                                            [element(1, UpTime) / 1000])),
     CPUTime = ejabberd_cluster:call(Node, erlang, statistics, [runtime]),
-    CPUTimeS = list_to_binary(io_lib:format("~.3f",
+    CPUTimeS = (str:format("~.3f",
                                             [element(1, CPUTime) / 1000])),
-    OnlineUsers = mnesia:table_info(session, size),
+    OnlineUsers = ejabberd_sm:connected_users_number(),
     TransactionsCommitted = ejabberd_cluster:call(Node, mnesia,
 				     system_info, [transaction_commits]),
     TransactionsAborted = ejabberd_cluster:call(Node, mnesia,
@@ -2172,7 +2189,7 @@ get_node(global, Node, [<<"stats">>], _Query, Lang) ->
     TransactionsLogged = ejabberd_cluster:call(Node, mnesia, system_info,
 				  [transaction_log_writes]),
     [?XC(<<"h1">>,
-	 list_to_binary(io_lib:format(?T(<<"Statistics of ~p">>), [Node]))),
+	 (str:format(?T(<<"Statistics of ~p">>), [Node]))),
      ?XAE(<<"table">>, [],
 	  [?XE(<<"tbody">>,
 	       [?XE(<<"tr">>,
@@ -2236,11 +2253,11 @@ get_node(global, Node, [<<"update">>], Query, Lang) ->
 		      (BeamsLis ++ SelectButtons))
 	   end,
     FmtScript = (?XC(<<"pre">>,
-		     list_to_binary(io_lib:format("~p", [Script])))),
+		     (str:format("~p", [Script])))),
     FmtLowLevelScript = (?XC(<<"pre">>,
-			     list_to_binary(io_lib:format("~p", [LowLevelScript])))),
+			     (str:format("~p", [LowLevelScript])))),
     [?XC(<<"h1">>,
-	 list_to_binary(io_lib:format(?T(<<"Update ~p">>), [Node])))]
+	 (str:format(?T(<<"Update ~p">>), [Node])))]
       ++
       case Res of
 	ok -> [?XREST(<<"Submitted">>)];
@@ -2260,16 +2277,17 @@ get_node(global, Node, [<<"update">>], Query, Lang) ->
 	       ?BR,
 	       ?INPUTT(<<"submit">>, <<"update">>, <<"Update">>)])];
 get_node(Host, Node, NPath, Query, Lang) ->
-    {Hook, Opts} = case Host of
-		     global ->
-			 {webadmin_page_node, [Node, NPath, Query, Lang]};
-		     Host ->
-			 {webadmin_page_hostnode,
-			  [Host, Node, NPath, Query, Lang]}
-		   end,
-    case ejabberd_hooks:run_fold(Hook, Host, [], Opts) of
+    Res = case Host of
+	      global ->
+		  ejabberd_hooks:run_fold(webadmin_page_node, Host, [],
+					  [Node, NPath, Query, Lang]);
+	      _ ->
+		  ejabberd_hooks:run_fold(webadmin_page_hostnode, Host, [],
+					  [Host, Node, NPath, Query, Lang])
+	  end,
+    case Res of
       [] -> [?XC(<<"h1">>, <<"Not Found">>)];
-      Res -> Res
+      _ -> Res
     end.
 
 %%%==================================
@@ -2405,7 +2423,7 @@ node_backup_parse_query(Node, Query) ->
                                                     lists:keysearch(<<Action/binary,
                                                                       "host">>,
                                                                     1, Query),
-                                                ejabberd_cluster:call(Node, ejd2odbc,
+                                                ejabberd_cluster:call(Node, ejd2sql,
                                                          export, [Host, Path]);
 					    <<"import_file">> ->
 						ejabberd_cluster:call(Node, ejabberd_admin,
@@ -2461,7 +2479,7 @@ node_ports_to_xhtml(Ports, Lang) ->
 						   SModule, <<"15">>)]),
 				      ?XAE(<<"td">>, direction(ltr),
 					  [?TEXTAREA(<<"opts", SSPort/binary>>,
-						     (iolist_to_binary(integer_to_list(NumLines))),
+						     (integer_to_binary(NumLines)),
 						     <<"35">>, SOptsClean)]),
 				      ?XE(<<"td">>,
 					  [?INPUTT(<<"submit">>,
@@ -2506,7 +2524,7 @@ make_netprot_html(NetProt) ->
 get_port_data(PortIP, Opts) ->
     {Port, IPT, IPS, _IPV, NetProt, OptsClean} =
 	ejabberd_listener:parse_listener_portip(PortIP, Opts),
-    SPort = jlib:integer_to_binary(Port),
+    SPort = integer_to_binary(Port),
     SSPort = list_to_binary(
                lists:map(fun (N) ->
                                  io_lib:format("~.16b", [N])
@@ -2604,7 +2622,7 @@ node_modules_to_xhtml(Modules, Lang) ->
 				     [?XC(<<"td">>, SModule),
 				      ?XAE(<<"td">>, direction(ltr),
 					  [?TEXTAREA(<<"opts", SModule/binary>>,
-						     (iolist_to_binary(integer_to_list(NumLines))),
+						     (integer_to_binary(NumLines)),
 						     <<"40">>, SOpts)]),
 				      ?XE(<<"td">>,
 					  [?INPUTT(<<"submit">>,
@@ -2686,11 +2704,11 @@ node_update_parse_query(Node, Query) ->
 	    {ok, _} -> ok;
 	    {error, Error} ->
 		?ERROR_MSG("~p~n", [Error]),
-		{error, iolist_to_binary(io_lib:format("~p", [Error]))};
+		{error, (str:format("~p", [Error]))};
 	    {badrpc, Error} ->
 		?ERROR_MSG("Bad RPC: ~p~n", [Error]),
 		{error,
-		 <<"Bad RPC: ", (iolist_to_binary(io_lib:format("~p", [Error])))/binary>>}
+		 <<"Bad RPC: ", ((str:format("~p", [Error])))/binary>>}
 	  end;
       _ -> nothing
     end.
@@ -2755,7 +2773,7 @@ pretty_print_xml(#xmlel{name = Name, attrs = Attrs,
 element_to_list(X) when is_atom(X) ->
     iolist_to_binary(atom_to_list(X));
 element_to_list(X) when is_integer(X) ->
-    iolist_to_binary(integer_to_list(X)).
+    integer_to_binary(X).
 
 list_to_element(Bin) ->
     {ok, Tokens, _} = erl_scan:string(binary_to_list(Bin)),
@@ -2763,8 +2781,8 @@ list_to_element(Bin) ->
     Element.
 
 url_func({user_diapason, From, To}) ->
-    <<(iolist_to_binary(integer_to_list(From)))/binary, "-",
-      (iolist_to_binary(integer_to_list(To)))/binary, "/">>;
+    <<(integer_to_binary(From))/binary, "-",
+      (integer_to_binary(To))/binary, "/">>;
 url_func({users_queue, Prefix, User, _Server}) ->
     <<Prefix/binary, "user/", User/binary, "/queue/">>;
 url_func({user, Prefix, User, _Server}) ->
@@ -2779,7 +2797,7 @@ cache_control_public() ->
 
 %% Transform 1234567890 into "1,234,567,890"
 pretty_string_int(Integer) when is_integer(Integer) ->
-    pretty_string_int(iolist_to_binary(integer_to_list(Integer)));
+    pretty_string_int(integer_to_binary(Integer));
 pretty_string_int(String) when is_binary(String) ->
     {_, Result} = lists:foldl(fun (NewNumber, {3, Result}) ->
 				      {1, <<NewNumber, $,, Result/binary>>};
@@ -2956,7 +2974,8 @@ make_menu_item(item, 3, URI, Name, Lang) ->
 %%%==================================
 
 
-opt_type(access) -> fun (V) -> V end;
-opt_type(_) -> [access].
+opt_type(access) -> fun acl:access_rules_validator/1;
+opt_type(access_readonly) -> fun acl:access_rules_validator/1;
+opt_type(_) -> [access, access_readonly].
 
 %%% vim: set foldmethod=marker foldmarker=%%%%,%%%=:
