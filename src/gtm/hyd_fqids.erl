@@ -1,6 +1,6 @@
 -module(hyd_fqids).
 % Created hyd_fqids.erl the 02:14:53 (06/02/2014) on core
-% Last Modification of hyd_fqids.erl at 07:33:27 (31/01/2017) on core
+% Last Modification of hyd_fqids.erl at 16:32:30 (02/02/2017) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -12,10 +12,8 @@
     read/1, read/2,
     args/2, args/3,
     stats/1, stats/2,
-    action/3
-]).
-
--export([
+    valid/1,
+    action/3,
     action_async/4
 ]).
 
@@ -42,12 +40,21 @@ reload() ->
 
 % read information about an id
 -spec read(
-    FQID :: list() | binary(),
+    Fqid :: list() | binary(),
     Userid :: list() | binary() ) -> {ok, list()} | {error, term()}.
 
-read(FQID, Userid) ->
+read(Fqid, Userid) ->
+    case correct([Fqid, Userid]) of
+        true ->
+            do_read(Fqid, Userid);
+
+        false ->
+            internal_error(51)
+    end.
+
+do_read(Fqid, Userid) ->
     Ops = [
-        hyd:operation(<<"read">>, module(), [ FQID, Userid ])
+        hyd:operation(<<"read">>, module(), [ Fqid, Userid ])
     ],
     run(Ops).
 
@@ -55,6 +62,15 @@ read(FQID, Userid) ->
     Fqid :: list() | binary()) -> {ok, list()} | {error, term()}.
 
 read(Fqid) ->
+    case correct([Fqid]) of
+        true ->
+            do_read(Fqid);
+
+        false ->
+            internal_error(72)
+    end.
+
+do_read(Fqid) ->
     Ops = [
         hyd:operation(<<"read">>, module(), [ Fqid ])
     ],
@@ -64,18 +80,36 @@ read(Fqid) ->
     Fqid :: list() | binary()) -> {ok, list()} | {error, term()}.
 
 stats(Fqid) ->
+    case correct([Fqid]) of
+        true ->
+            do_stats(Fqid);
+
+        false ->
+            internal_error(88)
+    end.
+
+do_stats(Fqid) ->
     Ops = [
         hyd:operation(<<"stats">>, module(), [ Fqid ])
     ],
     run(Ops).
 
 -spec stats(
-    FQID :: list() | binary(),
+    Fqid :: list() | binary(),
     Userid :: list() | binary() ) -> {ok, list()} | {error, term()}.
 
-stats(FQID, Userid) ->
+stats(Fqid, Userid) ->
+    case correct([Fqid, Userid]) of
+        true ->
+            do_stats(Fqid, Userid);
+
+        false ->
+            internal_error(107)
+    end.
+
+do_stats(Fqid, Userid) ->
     Ops = [
-        hyd:operation(<<"stats">>, module(), [ FQID, Userid ])
+        hyd:operation(<<"stats">>, module(), [ Fqid, Userid ])
     ],
     run(Ops).
 
@@ -84,6 +118,15 @@ stats(FQID, Userid) ->
     Method :: list() | binary()) -> {ok, list()} | {error, term()}.
 
 args(Type, Method) ->
+    case correct([Type, Method]) of
+        true ->
+            do_args(Type, Method);
+
+        false ->
+            internal_error(129)
+    end.
+
+do_args(Type, Method) ->
     Ops = [
         hyd:operation(<<"actionArgs">>, module(), [ Type, Method ], 500)
     ],
@@ -95,7 +138,16 @@ args(Type, Method) ->
     Method :: list() | binary(),
     Userid :: list() | binary() ) -> list() | {error, term()}.
 
-args(Type, <<"create">> = Method, Userid) ->
+args(Type, Method, Userid) ->
+    case correct([Type, Method, Userid]) of
+        true ->
+            do_args(Type, Method, Userid);
+
+        false ->
+            internal_error(147)
+    end.
+
+do_args(Type, <<"create">> = Method, Userid) ->
     Ops = [
         hyd:operation(<<"createArgs">>, module(), [ Type, Method, Userid ])
     ],
@@ -106,7 +158,7 @@ args(Type, <<"create">> = Method, Userid) ->
             _Err
     end;
 
-args(Type, Method, Userid) ->
+do_args(Type, Method, Userid) ->
     Ops = [
         hyd:operation(<<"actionArgs">>, module(), [ Type, Method, Userid ], 500)
     ],
@@ -125,7 +177,16 @@ args(Type, Method, Userid) ->
     Action :: list() | binary(),
     Args :: list() ) -> list() | binary() | {error, term()}. 
 
-action(Type, <<"create">>, Args) ->
+action(Type, Method, Args) ->
+    case correct([Type, Method, Args]) of
+        true ->
+            do_action(Type, Method, Args);
+
+        false ->
+            internal_error(186)
+    end.
+
+do_action(Type, <<"create">>, Args) ->
     FilteredArgs = lists:map(fun hyd:quote/1, Args),
     Op = [
         hyd:operation(<<"create">>, module(), [ Type | FilteredArgs ])
@@ -137,7 +198,7 @@ action(Type, <<"create">>, Args) ->
             _Err
     end;
 
-action(Any, Action, Args) ->
+do_action(Any, Action, Args) ->
     FilteredArgs = lists:map(fun hyd:quote/1, Args),
     Op = [
         hyd:operation(<<"action">>, module(), [ Any, Action | FilteredArgs ])
@@ -145,11 +206,24 @@ action(Any, Action, Args) ->
     run(Op).
 
 % asynchronous version of action
-action_async(TransId, Type, <<"create">>, Args) ->
+action_async(TransId, Type, Method, Args) ->
+    case correct([Type, Method, Args]) of
+        true ->
+            do_action_async(TransId, Type, Method, Args);
+
+        false ->
+            internal_error(216)
+    end.
+
+do_action_async(TransId, Type, <<"create">>, Args) ->
     FilteredArgs = lists:map(fun hyd:quote/1, Args),
     db:cast(TransId, <<"create">>, module(), [ Type | FilteredArgs ]);
 
-action_async(TransId, Any, Action, Args) ->
+do_action_async(TransId, _, <<"info">>, Args) ->
+    FilteredArgs = lists:map(fun hyd:quote/1, Args),
+    db:cast(TransId, <<"read">>, module(), FilteredArgs);
+
+do_action_async(TransId, Any, Action, Args) ->
     FilteredArgs = lists:map(fun hyd:quote/1, Args),
     db:cast(TransId, <<"action">>, module(), [ Any, Action | FilteredArgs ]).
 
@@ -251,3 +325,45 @@ internal_error(Code) ->
 internal_error(Code, Args) ->
     hyd:error(?MODULE, Code, Args).
 
+% check the fqid validity (is format valid ?)
+% any null bytes are forbidden -> valid is false.
+-spec valid(
+    Value :: iodata() | integer()
+) -> true | false.
+
+valid(Value) when is_list(Value) ->
+    correct(Value);
+valid(Value) when is_integer(Value) ->
+    true;
+valid(Value) ->
+    ?DEBUG(?MODULE_STRING ".~p valid: Value: ~p", [ ?LINE, Value ]),
+    case binary:match(Value,<<0>>) of
+         nomatch ->
+            true;
+        _ ->
+            false
+    end.
+
+correct(List) when is_list(List) ->
+    lists:all(fun valid/1, List);
+correct(Elem) ->
+    correct([Elem]).
+
+% fqid_head(<<First:1/binary, Rest/bits>>) when
+%     First =:= <<"?">>;
+%     First =:= <<"@">>;
+%     First =:= <<"#">>;
+%     First =:= <<"%">>;
+%     First =:= <<"&">>;
+%     First =:= <<"!">> ->
+%     fqid_body(Rest);
+% fqid_head(_) ->
+%     false.
+%     
+% fqid_body(Body) ->
+%     case binary:match(Body,<<0>>) of
+%          nomatch ->
+%             true;
+%         _ ->
+%             false
+%     end.

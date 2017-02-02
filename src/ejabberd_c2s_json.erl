@@ -354,8 +354,9 @@ session_established({login, SeqId, Args}, StateData) ->
     ]),
 
     % [GTM] Store this connection
-    {Ip, Userport} = StateData#state.ip,
-    Userip = fmt_ip(Ip),
+    {Ip, Port} = StateData#state.ip,
+    Userip = list_to_binary(fmt_ip(Ip)),
+    Userport = Port,
 
     TmpState = StateData#state{
         authenticated=false,
@@ -411,7 +412,7 @@ session_established({login, SeqId, Args}, StateData) ->
 
         {ok, UserId} ->
 
-            % create the session
+            % create the session - synchronous call
             data_specific(TmpState, hyd_users, session_init, [ Userip, Userport ]),
 
             % [GTM] every data inside the "visible" category
@@ -571,41 +572,41 @@ authorized({action, SeqId, Args}, StateData) when is_list(Args) ->
         <<"info">> ->
             case  fxml:get_attr_s(<<"id">>, Args) of
                 <<>> ->
-                    Answer = make_error(undefined, SeqId, 404, <<"invalid call">>),
+                    Answer = make_error(undefined, SeqId, 404, <<"invalid call, missing id">>),
                     send_element(StateData, (Answer)),
                     fsm_next_state(authorized, StateData);
 
                 Id ->
-                    % Params = [ Id, StateData#state.userid ],
-                    % Operation = <<"info">>,
-                    % hyd_fqids:action_async(SeqId, Id, Operation, Params),
-                    % Actions = StateData#state.aux_fields,
-                    % fsm_next_state(authorized, StateData#state{aux_fields=[{SeqId, [ Id, Operation, Params ]} | Actions ]})
-                    case data_specific(StateData, hyd_fqids, read, [ Id, StateData#state.userid ]) of
-                        {error, Reason} ->
-                            ?ERROR_MSG(?MODULE_STRING "[~5w] Info: error: ~p", [ ?LINE, Reason ]),
-                            Answer = make_error(Reason, SeqId, 500, <<"internal server error">>),
-                            send_element(StateData, (Answer)),
-                            fsm_next_state(authorized, StateData);
+                    Params = [ Id, StateData#state.userid ],
+                    Operation = <<"info">>,
+                    hyd_fqids:action_async(SeqId, Id, Operation, Params),
+                    Actions = StateData#state.aux_fields,
+                    fsm_next_state(authorized, StateData#state{aux_fields=[{SeqId, [ Id, Operation, Params ]} | Actions ]})
+                    % case data_specific(StateData, hyd_fqids, read, [ Id, StateData#state.userid ]) of
+                    %     {error, Reason} ->
+                    %         ?ERROR_MSG(?MODULE_STRING "[~5w] Info: error: ~p", [ ?LINE, Reason ]),
+                    %         Answer = make_error(Reason, SeqId, 500, <<"internal server error">>),
+                    %         send_element(StateData, (Answer)),
+                    %         fsm_next_state(authorized, StateData);
 
-                        {ok, []} ->
-                            Answer = make_answer_not_found(SeqId),
-                            send_element(StateData, (Answer)),
-                            fsm_next_state(authorized, StateData);
+                    %     {ok, []} ->
+                    %         Answer = make_answer_not_found(SeqId),
+                    %         send_element(StateData, (Answer)),
+                    %         fsm_next_state(authorized, StateData);
 
-                        {ok, Result} ->
-                            %?DEBUG(?MODULE_STRING "[~5w] Info: returns: ~p", [ ?LINE, Result ]),
-                            Answer = make_answer(SeqId, 200, Result),
-                            send_element(StateData, (Answer)),
-                            delivered_notification( StateData, Id, Result),
-                            fsm_next_state(authorized, StateData);
+                    %     {ok, Result} ->
+                    %         %?DEBUG(?MODULE_STRING "[~5w] Info: returns: ~p", [ ?LINE, Result ]),
+                    %         Answer = make_answer(SeqId, 200, Result),
+                    %         send_element(StateData, (Answer)),
+                    %         delivered_notification( StateData, Id, Result),
+                    %         fsm_next_state(authorized, StateData);
 
-                        [] ->
-                            ?ERROR_MSG(?MODULE_STRING "[~5w] 'info': returns empty for ~p", [ ?LINE, Id ]),
-                            Answer = make_answer_not_found(SeqId),
-                            send_element(StateData, (Answer)),
-                            fsm_next_state(authorized, StateData)
-                    end
+                    %     [] ->
+                    %         ?ERROR_MSG(?MODULE_STRING "[~5w] 'info': returns empty for ~p", [ ?LINE, Id ]),
+                    %         Answer = make_answer_not_found(SeqId),
+                    %         send_element(StateData, (Answer)),
+                    %         fsm_next_state(authorized, StateData)
+                    % end
             end;
 
         <<"stats">> ->
@@ -3305,13 +3306,7 @@ do_thread(Op, User, SeqId, Args, State) when
     Op =:= ?THREAD_SUBSCRIBERS ->
     case args(Args, [<<"id">>]) of
         [ _Id ] = Params ->
-            case thread(State, Op, User, Params) of
-                [] ->
-                    [];
-
-                {ok, Result} ->
-                    Result
-            end;
+            thread(State, Op, User, Params);
 
         _ ->
             Answer = make_error(SeqId, 406, <<"missing arguments: id">>),
@@ -3324,13 +3319,7 @@ do_thread(Op, User, SeqId, Args, State) when
     Op =:= ?THREAD_UNSUBSCRIBE ->
     case args(Args, [<<"id">>]) of
         [ _Id ] = Params ->
-        case thread(State, Op, User, Params) of
-            [] ->
-                [];
-
-            {ok, Result} ->
-                Result
-        end;
+            thread(State, Op, User, Params);
 
         _ ->
             Answer = make_error(SeqId, 406, <<"missing arguments: id">>),
@@ -3342,13 +3331,7 @@ do_thread(Op, User, SeqId, Args, State) when
     Op =:= ?THREAD_GETMESSAGE ->
     case args(Args, [<<"id">>, <<"msgid">>]) of
         [ _Id, _Msgid ] = Params ->
-            case thread(State, Op, User, Params) of
-                [] ->
-                    [];
-
-                {ok, Result} ->
-                    Result
-            end;
+            thread(State, Op, User, Params);
 
         _ ->
             Answer = make_error(SeqId, 406, <<"missing arguments">>),
@@ -3429,13 +3412,7 @@ do_contactlist(Op, User, SeqId, Args, State) when
 
     case args(Args, [<<"id">>]) of
         [ _Id ] = Params ->
-            case contactlist(State, Op, User, Params) of
-                [] ->
-                    [];
-
-                {ok, Result} ->
-                    Result
-            end;
+            contactlist(State, Op, User, Params);
 
         _ ->
             Answer = make_error(SeqId, 406, <<"missing arguments: id">>),
@@ -3884,7 +3861,7 @@ get_args(State, Element, Operation) ->
     State :: #state{},
     Args :: list() ) -> {ok, list()} | {error, term()}.
 
-operation_args(#state{db=_Db, sid=_Sid, user=Username, server=_Server}, Args) ->
+operation_args(State, Args) ->
     ?DEBUG(?MODULE_STRING "[~5w] operation_args: Args: ~p", [ ?LINE, Args ]),
     %Result = rpc:call(Db, hyd_fqids, args, Args), % synchro call
     %[ Fqid, Function | _ ] = Args,
@@ -3897,8 +3874,12 @@ operation_args(#state{db=_Db, sid=_Sid, user=Username, server=_Server}, Args) ->
         [<<>>] ->
             {error, invalid};
 
+        {error, {_Operation, {timeout, _}} = Error} -> % will retry
+            ?ERROR_MSG(?MODULE_STRING "[~5w] operations_args: retry because error: ~p, args: ~p", [ ?LINE, Error, Args ]),
+            operation_args(State, Args);
+
         {error, _ } = Error ->
-            ?ERROR_MSG(?MODULE_STRING " [~s (~p|~p) ] operations_args: call error: ~p, args: ~p", [ Username, seqid(), _Sid, Error, Args ]),
+            ?ERROR_MSG(?MODULE_STRING "[~5w] operations_args: error: ~p, args: ~p", [ ?LINE, Error, Args ]),
             Error;
 
         [] ->

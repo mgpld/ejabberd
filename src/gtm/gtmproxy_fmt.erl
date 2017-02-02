@@ -1,6 +1,6 @@
 -module(gtmproxy_fmt).
 % Created gtmproxy_fmt.erl the 02:17:02 (16/06/2014) on core
-% Last Modification of gtmproxy_fmt.erl at 23:20:17 (09/07/2014) on core
+% Last Modification of gtmproxy_fmt.erl at 13:30:38 (02/02/2017) on core
 %
 % Author: "rolph" <rolphin@free.fr>
 
@@ -16,14 +16,14 @@ ref(Args) ->
     ref(Args, []).
 
 fmt([], Result) ->
-    lists:reverse(Result);
+    list_to_binary(lists:reverse(Result));
 fmt([Elem], Result) ->
     fmt([], [ [$", filter(Elem), $"] | Result ]);
 fmt([Elem|Rest], Result) ->
     fmt(Rest, [ $, , [$", filter(Elem), $"] | Result ]).
 
 ref([], Result) ->
-    lists:reverse(Result);
+    list_to_binary(lists:reverse(Result));
 ref([Elem], Result) ->
     ref([], [ filter(Elem) | Result ]);
 ref([Elem|Rest], Result) ->
