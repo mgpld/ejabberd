@@ -1,6 +1,6 @@
 -module(hyd_fqids).
 % Created hyd_fqids.erl the 02:14:53 (06/02/2014) on core
-% Last Modification of hyd_fqids.erl at 22:34:49 (30/08/2016) on core
+% Last Modification of hyd_fqids.erl at 07:33:27 (31/01/2017) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -85,7 +85,7 @@ stats(FQID, Userid) ->
 
 args(Type, Method) ->
     Ops = [
-        hyd:operation(<<"actionArgs">>, module(), [ Type, Method ])
+        hyd:operation(<<"actionArgs">>, module(), [ Type, Method ], 500)
     ],
     run(Ops).
     %parse_singleton(Ops).
@@ -108,7 +108,7 @@ args(Type, <<"create">> = Method, Userid) ->
 
 args(Type, Method, Userid) ->
     Ops = [
-        hyd:operation(<<"actionArgs">>, module(), [ Type, Method, Userid ])
+        hyd:operation(<<"actionArgs">>, module(), [ Type, Method, Userid ], 500)
     ],
     case parse_indexed(Ops) of
         {ok, Result} ->

@@ -1,6 +1,6 @@
 -module(gtmworker_srv).
 % Created gtmworker_srv.erl the 02:17:02 (16/06/2014) on core
-% Last Modification of gtmworker_srv.erl at 23:40:17 (07/02/2016) on sd-19230
+% Last Modification of gtmworker_srv.erl at 23:41:18 (01/02/2017) on core
 %
 % Author: "rolph" <rolphin@free.fr>
 
@@ -231,10 +231,10 @@ cnode(Prefix, PortNum, InstanceId, Env) ->
 loop(Port, InstanceId) ->
     receive 
         {Port, {exit_status, _} = Reason} ->
-            error_logger:error_msg("[GTM] Instance: ~p, Port: ~p exited with reason: ~p", [ InstanceId, Port, Reason]),
+            error_logger:error_msg(?MODULE_STRING "~.p (~p) [GTM] Instance: ~p, Port: ~p exited with reason: ~p", [ ?LINE, self(), InstanceId, Port, Reason]),
             exit(Reason);
             
         _Data ->
-            error_logger:info_msg("[GTM] Instance (~p): ~p\n", [ InstanceId, _Data ]),
+            error_logger:info_msg(?MODULE_STRING ".~p (~p) [GTM] Instance (~p): ~p\n", [ ?LINE, self(), InstanceId, _Data ]),
             loop(Port, InstanceId)
     end.

@@ -111,13 +111,14 @@ do_poll(Pid, Fun, Count) ->
 
         {ok, {Operation, Client} = _Args} when is_tuple(Client) ->
             ?DEBUG(?MODULE_STRING ".~p ~p ** gen_server will handle : ~p instance ~p.\n", [ ?LINE, self(), _Args, Count ]),
+            Start = os:timestamp(),
             Result = Fun( Operation ),
             gen_server:reply( Client, Result),
+            ?DEBUG(?MODULE_STRING ".~p ~p ** gen_server     handled : ~p in ~p ns\n", [ ?LINE, self(), _Args, timer:now_diff(os:timestamp(), Start) ]),
             do_poll(Pid, Fun, Count - 1);
 
-        %{ok,[<<"canonical">>,<<"infotree">>,[1001]],<0.6744.0>,100}
         {ok, Operation, Client, TransId} when is_pid(Client) ->
-            ?DEBUG(?MODULE_STRING ".~p ~p ** plain      will handle : ~p, client: ~p, transid: ~p, round ~p.\n", [ ?LINE, self(), Operation, Client, TransId, Count ]),
+            ?DEBUG(?MODULE_STRING ".~p ~p ** async.     will handle : ~p, client: ~p, transid: ~p, round ~p.\n", [ ?LINE, self(), Operation, Client, TransId, Count ]),
             Result = Fun({call, Operation}),
             Client ! {db, TransId, Result},
             do_poll(Pid, Fun, Count - 1);
@@ -138,24 +139,28 @@ handle_call(snap, _From, #state{queries=Q} = State) ->
 handle_call(poll, From, #state{childs=Childs, queue=Q} = State) ->
     case queue:out( Q ) of
         {{value, { _Query, _, _Client } = Args}, NewQ} ->
-            ?DEBUG(?MODULE_STRING ".~p Unqueue ~p/~p to ~p\n", [ ?LINE, _Query, _Client, From ]),
+            ?DEBUG(?MODULE_STRING ".~p (~p) Unqueue ~p/~p to ~p\n", [ ?LINE, self(), _Query, _Client, From ]),
             {reply, {ok, Args}, State#state{queue=NewQ}};
 
         {empty, _} ->
-            ?DEBUG(?MODULE_STRING ".~p Nothing to do: hanging (waiting for client)\n", [ ?LINE ]),
-            {noreply, State#state{ childs= [ From | Childs ] }}
+            ?DEBUG(?MODULE_STRING ".~p (~p) Nothing to do: hanging (waiting for client)\n", [ ?LINE, self() ]),
+            NewChilds = Childs ++ [ From ],
+            ?DEBUG(?MODULE_STRING ".~p (~p)        : ~p\n", [ ?LINE, self(), NewChilds ]),
+            {noreply, State#state{ childs=NewChilds }}
+            %{noreply, State#state{ childs= lists:reverse([ From | Childs ]) }}
+            %{noreply, State#state{ childs= [ From | Childs ] }}
     end;
 
 
 handle_call({Operation, Timeout}, From, #state{childs=[], queue=Q, miss=Miss} = State) when is_tuple(Operation) ->
-    ?DEBUG("No worker ready to answer query, queuing ~p/~p (~p) and hanging (waiting for worker)\n", [ Operation, From, Miss ]),
+    ?DEBUG(?MODULE_STRING ".~p (~p) No worker ready to answer query, queuing ~p/~p (~p) and hanging (waiting for worker)\n", [ ?LINE, self(), Operation, From, Miss ]),
     Timer = {os:timestamp(), Timeout}, 
     Item = {Operation, Timer, From},
     NewQ = queue:in(Item, Q),
     {noreply, State#state{ queue=NewQ, miss=Miss+1 }};
 
 handle_call({Operation, _Timeout}, From, #state{childs=[Child | Rest], queries=Queries} = State) when is_tuple(Operation) ->
-    ?DEBUG("Shortcut: bypass the queue for ~p, ~p\n", [ Child, Operation ]),
+    ?DEBUG(?MODULE_STRING ".~p (~p) Shortcut: bypass the queue for ~p, ~p\n", [ ?LINE, self(), Child, Operation ]),
     answer(Child, Operation, From),
     {noreply, State#state{childs=Rest, queries=Queries+1}};
 
@@ -169,7 +174,7 @@ handle_call(_Query, _Node, State) ->
 
 % Callback Casts
 handle_cast({Client, [ TransId | Operation ]}, #state{childs=[Child | Rest], queries=Queries} = State) ->
-    ?DEBUG(?MODULE_STRING ".~p handle_cast: TransId: ~p, Operation: ~p", [ ?LINE, TransId, Operation ]),
+    ?DEBUG(?MODULE_STRING ".~p (~p) handle_cast: TransId: ~p, Operation: ~p", [ ?LINE, self(), TransId, Operation ]),
     gen_server:reply(Child, {ok, Operation, Client, TransId}), 
     {noreply, State#state{childs=Rest, queries=Queries+1}};
 
@@ -198,9 +203,9 @@ code_change(_, State, _Vsn) ->
 
 
 % internals
-
+% give some work to the caller
 answer(Pid, Query, Client) ->
-    ?DEBUG("Sending to worker ~p: query: ~p for client ~p\n",  [ Pid, Query, Client ]),
+    ?DEBUG(?MODULE_STRING ".~p (~p) Sending work to worker ~p: query: ~p for client ~p\n",  [ ?LINE, self(), Pid, Query, Client ]),
     gen_server:reply( Pid, {ok, {Query, Client}}).
 
 -ifdef(DEBUG).

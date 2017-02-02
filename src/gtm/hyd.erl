@@ -1,6 +1,6 @@
 -module(hyd).
 % Created hyd.erl the 02:16:47 (06/02/2014) on core
-% Last Modification of hyd.erl at 13:07:39 (04/09/2016) on core
+% Last Modification of hyd.erl at 07:41:27 (31/01/2017) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -96,7 +96,13 @@ call([ Op | Ops ], Result) ->
             call(Ops, Result);
 
         {ok, Value} ->
-            call(Ops, [Value|Result])
+            call(Ops, [Value|Result]);
+
+%%        {'EXIT', {timeout,{gen_server,call,[gtmproxy,{call,[<<"actionArgs">>,<<"fqids">>,[<<"#0004564303RdTJZPD4AY2cwGa364303i58720">>,<<"getInfos">>,<<"61">>]]}]}}}
+%%
+        {'EXIT', Error} ->
+            call(Ops, [ {error, {Op, Error} } | Result])
+
     end.
 
 pcall([]) ->

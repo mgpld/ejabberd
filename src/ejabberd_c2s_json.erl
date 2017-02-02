@@ -576,6 +576,11 @@ authorized({action, SeqId, Args}, StateData) when is_list(Args) ->
                     fsm_next_state(authorized, StateData);
 
                 Id ->
+                    % Params = [ Id, StateData#state.userid ],
+                    % Operation = <<"info">>,
+                    % hyd_fqids:action_async(SeqId, Id, Operation, Params),
+                    % Actions = StateData#state.aux_fields,
+                    % fsm_next_state(authorized, StateData#state{aux_fields=[{SeqId, [ Id, Operation, Params ]} | Actions ]})
                     case data_specific(StateData, hyd_fqids, read, [ Id, StateData#state.userid ]) of
                         {error, Reason} ->
                             ?ERROR_MSG(?MODULE_STRING "[~5w] Info: error: ~p", [ ?LINE, Reason ]),
