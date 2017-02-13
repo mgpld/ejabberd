@@ -1,6 +1,6 @@
 -module(hyd_fqids).
 % Created hyd_fqids.erl the 02:14:53 (06/02/2014) on core
-% Last Modification of hyd_fqids.erl at 16:32:30 (02/02/2017) on core
+% Last Modification of hyd_fqids.erl at 11:46:10 (03/02/2017) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -219,7 +219,7 @@ do_action_async(TransId, Type, <<"create">>, Args) ->
     FilteredArgs = lists:map(fun hyd:quote/1, Args),
     db:cast(TransId, <<"create">>, module(), [ Type | FilteredArgs ]);
 
-do_action_async(TransId, _, <<"info">>, Args) ->
+do_action_async(TransId, _, read, Args) ->
     FilteredArgs = lists:map(fun hyd:quote/1, Args),
     db:cast(TransId, <<"read">>, module(), FilteredArgs);
 
@@ -331,6 +331,8 @@ internal_error(Code, Args) ->
     Value :: iodata() | integer()
 ) -> true | false.
 
+valid(read) ->
+    true;
 valid(Value) when is_list(Value) ->
     correct(Value);
 valid(Value) when is_integer(Value) ->

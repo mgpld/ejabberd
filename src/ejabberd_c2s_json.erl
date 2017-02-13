@@ -578,35 +578,10 @@ authorized({action, SeqId, Args}, StateData) when is_list(Args) ->
 
                 Id ->
                     Params = [ Id, StateData#state.userid ],
-                    Operation = <<"info">>,
+                    Operation = read,
                     hyd_fqids:action_async(SeqId, Id, Operation, Params),
                     Actions = StateData#state.aux_fields,
                     fsm_next_state(authorized, StateData#state{aux_fields=[{SeqId, [ Id, Operation, Params ]} | Actions ]})
-                    % case data_specific(StateData, hyd_fqids, read, [ Id, StateData#state.userid ]) of
-                    %     {error, Reason} ->
-                    %         ?ERROR_MSG(?MODULE_STRING "[~5w] Info: error: ~p", [ ?LINE, Reason ]),
-                    %         Answer = make_error(Reason, SeqId, 500, <<"internal server error">>),
-                    %         send_element(StateData, (Answer)),
-                    %         fsm_next_state(authorized, StateData);
-
-                    %     {ok, []} ->
-                    %         Answer = make_answer_not_found(SeqId),
-                    %         send_element(StateData, (Answer)),
-                    %         fsm_next_state(authorized, StateData);
-
-                    %     {ok, Result} ->
-                    %         %?DEBUG(?MODULE_STRING "[~5w] Info: returns: ~p", [ ?LINE, Result ]),
-                    %         Answer = make_answer(SeqId, 200, Result),
-                    %         send_element(StateData, (Answer)),
-                    %         delivered_notification( StateData, Id, Result),
-                    %         fsm_next_state(authorized, StateData);
-
-                    %     [] ->
-                    %         ?ERROR_MSG(?MODULE_STRING "[~5w] 'info': returns empty for ~p", [ ?LINE, Id ]),
-                    %         Answer = make_answer_not_found(SeqId),
-                    %         send_element(StateData, (Answer)),
-                    %         fsm_next_state(authorized, StateData)
-                    % end
             end;
 
         <<"stats">> ->
@@ -1327,16 +1302,29 @@ handle_info({db, SeqId, Result}, StateName, #state{aux_fields=Actions} = State) 
         {ok, Response} ->  % there is many response or a complex response
             case db_results:unpack(Response) of
                 {ok, Answer} ->
-                    ?DEBUG(?MODULE_STRING ".~p DB: SeqId: ~p, Result: '~p'", [ ?LINE, SeqId, Answer ]),
-                    Packet = make_result(SeqId, Answer),
-                    send_element(State, Packet),
-                    NewActions = lists:keydelete(SeqId, 1, Actions),
-                    fsm_next_state(StateName, State#state{aux_fields=NewActions});
+                    ?DEBUG(?MODULE_STRING "[~5w] Async DB: SeqId: ~p, Result: '~p'", [ ?LINE, SeqId, Answer ]),
+                    %?DEBUG(?MODULE_STRING "[~5w] DB: SeqId: ~p, Actions: ~p", [ ?LINE, SeqId, lists:keysearch(SeqId, 1, Actions) ]),
+                    %Packet = make_result(SeqId, Answer),
+                    case lists:keysearch(SeqId, 1, Actions) of
+                        {value, {_, [ _Element, read, _Params]}} ->
+                            Packet = make_answer(SeqId, 200, Answer),
+                            send_element(State, Packet),
+                            NewActions = lists:keydelete(SeqId, 1, Actions),
+                            fsm_next_state(StateName, State#state{aux_fields=NewActions});
+
+                        {value, {_, [ _Element, _Operation, _Params]}} ->
+                            Packet = make_result(SeqId, Answer),
+                            send_element(State, Packet),
+                            NewActions = lists:keydelete(SeqId, 1, Actions),
+                            fsm_next_state(StateName, State#state{aux_fields=NewActions})
+                    end;
+
 
                 {ok, Infos, More} ->
                     ?DEBUG(?MODULE_STRING "[~5w] Async DB: SeqId: ~p, Infos: ~p", [ ?LINE, SeqId, Infos ]),
                     case db_results:unpack(More) of
                         {ok, Answer} ->
+                            %?DEBUG(?MODULE_STRING "[~5w] Async DB: SeqId: ~p, Actions: ~p", [ ?LINE, SeqId, lists:keysearch(SeqId, 1, Actions) ]),
                             Packet = make_result(SeqId, Answer),
                             send_element(State, Packet),
                             case lists:keysearch(SeqId, 1, Actions) of
@@ -4609,6 +4597,7 @@ action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, E
     mod_chat:route(Host, Element, Creator, add, [Otherid]);
 
 action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, Element, Type, <<"delMember">>, [Otherid], Result) when 
+    Type =:= <<"conversationgroup">>;
     Type =:= <<"group">>;
     Type =:= <<"thread">> ->
 
@@ -4825,3 +4814,22 @@ handle_query(Operation, SeqId, Args, State) ->
             send_element(State, Answer),
             State
     end.
+
+send_message( #state{server=Server} = State, Contacts, Message) when is_list(Contacts) ->
+    lists:foreach(fun(Contact) ->
+        case get_user_pids(Contact,Server) of
+            [] ->
+                ok;
+
+            Pids ->
+                ?DEBUG(?MODULE_STRING " [~s]: send_message '~p' to ~s@~s's pids: ~p", [
+                    State#state.user,
+                    Message, Contact, Server, Pids ]),
+
+                lists:foreach(fun(Pid) ->
+                    Pid ! {status, State#state.userid, State#state.user, Message}
+                end, Pids)
+
+           end end, Contacts);
+send_message( State, Contact, Message) ->
+    send_message( State, [Contact], Message).

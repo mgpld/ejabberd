@@ -1,10 +1,10 @@
 -module(db_results).
 % Created db_results.erl the 12:24:07 (27/05/2014) on core
-% Last Modification of db_results.erl at 19:05:43 (02/10/2016) on core
+% Last Modification of db_results.erl at 12:01:03 (12/02/2017) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
--define(debug, true).
+%-define(debug, true).
 
 -ifdef(debug).
 -define(DEBUG(Format, Args),

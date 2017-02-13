@@ -89,14 +89,16 @@ poll( Pid ) ->
     do_poll(Pid, fun(X) -> X end, 3).
 
 poll( Pid, Fun) ->
+    ?DEBUG(?MODULE_STRING ".~p ~p start (instance 3)\n", [ ?LINE, self() ]),
     do_poll( Pid, Fun, 3).
 
 do_poll(_Pid, _, 0) ->
+    ?DEBUG(?MODULE_STRING ".~p ~p end (instance 0)\n", [ ?LINE, self() ]),
     ok;
 do_poll(Pid, Fun, Count) ->
     case gen_server:call( Pid, poll, infinity ) of
         {ok, {Operation, {Date, Timeout}, Client} = _Args} ->
-            ?DEBUG(?MODULE_STRING "~.p ~p ** will handle : ~p instance ~p.\n", [ ?LINE, self(), _Args, Count ]),
+            ?DEBUG(?MODULE_STRING ".~p ~p ** will handle : ~p instance ~p.\n", [ ?LINE, self(), _Args, Count ]),
             case expired(Date, Timeout) of
                 false -> 
                     ?DEBUG("(~p) Handle query ~p for client ~p : ~p\n", [ self(), Operation, Client, calendar:now_to_local_time(Date) ]),
@@ -105,20 +107,20 @@ do_poll(Pid, Fun, Count) ->
                     do_poll(Pid, Fun, Count - 1);
 
                 true ->
-                    ?DEBUG("(~p) Drop query ~p for client ~p because of expire, try another\n", [ self(), Operation, Client ]),
+                    ?DEBUG("(~p) Drop query ~p for client ~p because of expiration, try another\n", [ self(), Operation, Client ]),
                     do_poll(Pid, Fun, Count  - 1)
             end;
 
         {ok, {Operation, Client} = _Args} when is_tuple(Client) ->
-            ?DEBUG(?MODULE_STRING ".~p ~p ** gen_server will handle : ~p instance ~p.\n", [ ?LINE, self(), _Args, Count ]),
+            %?DEBUG(?MODULE_STRING ".~p ~p ** gen_server will handle : ~p instance ~p.\n", [ ?LINE, self(), _Args, Count ]),
             Start = os:timestamp(),
             Result = Fun( Operation ),
             gen_server:reply( Client, Result),
-            ?DEBUG(?MODULE_STRING ".~p ~p ** gen_server     handled : ~p in ~p ns\n", [ ?LINE, self(), _Args, timer:now_diff(os:timestamp(), Start) ]),
+            %?DEBUG(?MODULE_STRING ".~p ~p ** gen_server     handled : ~p in ~p ns\n", [ ?LINE, self(), _Args, timer:now_diff(os:timestamp(), Start) ]),
             do_poll(Pid, Fun, Count - 1);
 
         {ok, Operation, Client, TransId} when is_pid(Client) ->
-            ?DEBUG(?MODULE_STRING ".~p ~p ** async.     will handle : ~p, client: ~p, transid: ~p, round ~p.\n", [ ?LINE, self(), Operation, Client, TransId, Count ]),
+            %?DEBUG(?MODULE_STRING ".~p ~p ** async.     will handle : ~p, client: ~p, transid: ~p, round ~p.\n", [ ?LINE, self(), Operation, Client, TransId, Count ]),
             Result = Fun({call, Operation}),
             Client ! {db, TransId, Result},
             do_poll(Pid, Fun, Count - 1);
@@ -139,13 +141,13 @@ handle_call(snap, _From, #state{queries=Q} = State) ->
 handle_call(poll, From, #state{childs=Childs, queue=Q} = State) ->
     case queue:out( Q ) of
         {{value, { _Query, _, _Client } = Args}, NewQ} ->
-            ?DEBUG(?MODULE_STRING ".~p (~p) Unqueue ~p/~p to ~p\n", [ ?LINE, self(), _Query, _Client, From ]),
+            %?DEBUG(?MODULE_STRING ".~p (~p) Unqueue ~p/~p to ~p\n", [ ?LINE, self(), _Query, _Client, From ]),
             {reply, {ok, Args}, State#state{queue=NewQ}};
 
         {empty, _} ->
-            ?DEBUG(?MODULE_STRING ".~p (~p) Nothing to do: hanging (waiting for client)\n", [ ?LINE, self() ]),
+            %?DEBUG(?MODULE_STRING ".~p (~p) No work pending: worker ~p hanging\n", [ ?LINE, self(), From ]),
             NewChilds = Childs ++ [ From ],
-            ?DEBUG(?MODULE_STRING ".~p (~p)        : ~p\n", [ ?LINE, self(), NewChilds ]),
+            %?DEBUG(?MODULE_STRING ".~p (~p)        : ~p\n", [ ?LINE, self(), NewChilds ]),
             {noreply, State#state{ childs=NewChilds }}
             %{noreply, State#state{ childs= lists:reverse([ From | Childs ]) }}
             %{noreply, State#state{ childs= [ From | Childs ] }}
@@ -153,14 +155,14 @@ handle_call(poll, From, #state{childs=Childs, queue=Q} = State) ->
 
 
 handle_call({Operation, Timeout}, From, #state{childs=[], queue=Q, miss=Miss} = State) when is_tuple(Operation) ->
-    ?DEBUG(?MODULE_STRING ".~p (~p) No worker ready to answer query, queuing ~p/~p (~p) and hanging (waiting for worker)\n", [ ?LINE, self(), Operation, From, Miss ]),
+    %?DEBUG(?MODULE_STRING ".~p (~p) No worker ready to answer query, queuing ~p/~p (~p) and hanging (waiting for worker)\n", [ ?LINE, self(), Operation, From, Miss ]),
     Timer = {os:timestamp(), Timeout}, 
     Item = {Operation, Timer, From},
     NewQ = queue:in(Item, Q),
     {noreply, State#state{ queue=NewQ, miss=Miss+1 }};
 
 handle_call({Operation, _Timeout}, From, #state{childs=[Child | Rest], queries=Queries} = State) when is_tuple(Operation) ->
-    ?DEBUG(?MODULE_STRING ".~p (~p) Shortcut: bypass the queue for ~p, ~p\n", [ ?LINE, self(), Child, Operation ]),
+    %?DEBUG(?MODULE_STRING ".~p (~p) Shortcut: bypass the queue for ~p, ~p\n", [ ?LINE, self(), Child, Operation ]),
     answer(Child, Operation, From),
     {noreply, State#state{childs=Rest, queries=Queries+1}};
 
@@ -174,7 +176,7 @@ handle_call(_Query, _Node, State) ->
 
 % Callback Casts
 handle_cast({Client, [ TransId | Operation ]}, #state{childs=[Child | Rest], queries=Queries} = State) ->
-    ?DEBUG(?MODULE_STRING ".~p (~p) handle_cast: TransId: ~p, Operation: ~p", [ ?LINE, self(), TransId, Operation ]),
+    %?DEBUG(?MODULE_STRING ".~p (~p) handle_cast: TransId: ~p, Operation: ~p", [ ?LINE, self(), TransId, Operation ]),
     gen_server:reply(Child, {ok, Operation, Client, TransId}), 
     {noreply, State#state{childs=Rest, queries=Queries+1}};
 
@@ -187,7 +189,7 @@ handle_cast(stop, State) ->
     {stop, Reason, State};
 
 handle_cast(_Msg, State) ->
-    ?DEBUG(?MODULE_STRING ".~p handle_cast Default: ~p", [ ?LINE, _Msg ]),
+    %?DEBUG(?MODULE_STRING ".~p handle_cast Default: ~p", [ ?LINE, _Msg ]),
     {noreply, State}.
 
 % Info
@@ -277,6 +279,7 @@ reverse( Arg ) ->
 
 expired(Date, Timeout) ->
     Diff = timer:now_diff( os:timestamp(), Date ),
-    ?DEBUG("Diff: ~p, Timeout: ~p\n", [ Diff, Timeout ]),
-    Timeout < Diff.
+    TimeoutNs = Timeout * 1000,
+    %?DEBUG(?MODULE_STRING  ".~p (~p) Diff: ~p, Timeout: ~p\n", [ ?LINE, self(), Diff, TimeoutNs ]),
+    TimeoutNs < Diff.
 
