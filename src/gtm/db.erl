@@ -1,6 +1,6 @@
 -module(db).
 % Created db.erl the 13:26:07 (02/05/2014) on core
-% Last Modification of db.erl at 13:45:20 (02/02/2017) on core
+% Last Modification of db.erl at 07:37:25 (13/02/2017) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -11,7 +11,7 @@
     cast/4
 ]).
 
--define(debug, true).
+%-define(debug, true).
 
 -ifdef(debug).
 -define(DEBUG(Format, Args),

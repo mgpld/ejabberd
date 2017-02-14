@@ -1,6 +1,6 @@
 -module(hyp_notify).
 % Created hyp_notify.erl the 08:34:29 (03/09/2016) on core
-% Last Modification of hyp_notify.erl at 00:37:30 (10/01/2017) on core
+% Last Modification of hyp_notify.erl at 07:41:55 (13/02/2017) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -24,7 +24,7 @@
 
 % API
 -export([
-    add/2,
+    add/2, del/2,
     normal/1,
     message/2, message/3,
     users/1,
@@ -97,9 +97,12 @@ start_link() ->
 cancel() ->
     gen_fsm:send_all_state_event(?MODULE, cancel).
 
-% Add a player
+% Add a member
 add(Pid, Jid) ->
     gen_fsm:send_event(Pid, {add, Jid}).
+
+del(Pid, Jid) ->
+    gen_fsm:send_event(Pid, {del, Jid}).
 
 message(Pid, Message) ->
     gen_fsm:send_event(Pid, {message, Message}).
@@ -176,13 +179,13 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 
 %%normal/2
 normal({add, Jid}, #state{ users=Users } = State) ->
-	?DEBUG(?MODULE_STRING " normal: adding user ~p\n", [ Jid ]), 
+	?DEBUG(?MODULE_STRING "[~5w] normal: adding user ~p\n", [ ?LINE, Jid ]), 
     NewUsers = gb_trees:enter(Jid, undefined, Users),
     fsm_next_state(normal, State#state{ users=NewUsers });
 
 normal({del, Jid}, #state{ users=Users } = State) ->
-	?DEBUG(?MODULE_STRING " normal: deleting user ~p\n", [ Jid ]), 
-    NewUsers = gb_trees:delete(Jid, Users),
+	?DEBUG(?MODULE_STRING "[~5w] normal: deleting user ~p\n", [ ?LINE, Jid ]), 
+    NewUsers = gb_trees:delete_any(Jid, Users),
     fsm_next_state(normal, State#state{ users=NewUsers });
 
 normal({message, Message}, #state{ cid=Id } = State) ->
@@ -221,7 +224,7 @@ locked(_Msg, _, State) ->
     {reply, undefined, locked, State}.
 
 route(From, To, Message) ->
-    io:format(?MODULE_STRING " Route: From ~p, To ~p, Message: ~p\n", [ From, To, Message ]).
+    ?DEBUG(?MODULE_STRING "[~5w] Route: From ~p, To ~p, Message: ~p\n", [ ?LINE, From, To, Message ]).
 
 %% FIXME Message should be split to only content and ignore signaling info;
 %% from, to, type

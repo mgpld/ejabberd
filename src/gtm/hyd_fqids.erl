@@ -1,6 +1,6 @@
 -module(hyd_fqids).
 % Created hyd_fqids.erl the 02:14:53 (06/02/2014) on core
-% Last Modification of hyd_fqids.erl at 11:46:10 (03/02/2017) on core
+% Last Modification of hyd_fqids.erl at 07:37:40 (13/02/2017) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -23,7 +23,7 @@
 ]).
 -endif.
 
--define(debug, true).
+%-define(debug, true).
 
 -ifdef(debug).
 -define(DEBUG(Format, Args),

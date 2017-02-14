@@ -3935,10 +3935,10 @@ handle_message({game, eof}, From, _To, State) ->
     Packet = (Data),
     {ok, Packet};
     
-handle_message({chat, {Msgid, Message}}, _From, _To, State) ->
+handle_message({chat, {Msgid, Message}}, #jid{user=Ref} = _From, _To, State) ->
     Data = [{<<"message">>, [
                 {<<"type">>,<<"chat">>},
-                %{<<"from">>, Ref}, 
+                {<<"from">>, Ref}, 
                 to(State),
                 {<<"msgid">>, Msgid },
                 {<<"data">>, Message}
@@ -4579,8 +4579,7 @@ action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, E
     Type =:= <<"message">>;
     Type =:= <<"photo">> ->
 
-    ?DEBUG(?MODULE_STRING "[~5w] [~s (~p|~p)] action ~p ~p:~p(~p): ~p", [ ?LINE, _Username, seqid(), _Sid, Element, Type, "addRead", [Parent], _Result ]),
-
+    ?DEBUG(?MODULE_STRING "[~5w] [~s] action ~p ~p:~p(~p): ~p", [ ?LINE, _Username, Element, Type, "addRead", [Parent], _Result ]),
     RoomType = 0,
     mod_chat:create_room(Host, RoomType, Creator, Parent, []), % this will create synchronously the room if needed
     Packet = make_packet( _State, <<"event">>, [
@@ -4589,21 +4588,32 @@ action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, E
     mod_chat:route(Host, Parent, Creator, message, Packet);
 
 action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, Element, Type, <<"addMember">>, [Otherid], Result) when 
+    Type =:= <<"conversationgroup">>;
     Type =:= <<"group">>;
     Type =:= <<"thread">> ->
 
-    ?DEBUG(?MODULE_STRING "[~5w] [~s (~p|~p)] action ~p ~p:~p(~p): ~p", [ ?LINE, _Username, seqid(), _Sid, Element, Type, "addmember", [Otherid], Result ]),
-
-    mod_chat:route(Host, Element, Creator, add, [Otherid]);
+    ?DEBUG(?MODULE_STRING "[~5w] [~s ] action ~p ~p:~p(~p): ~p", [ ?LINE, _Username, Element, Type, "addmember", [Otherid], Result ]),
+    RoomType = 0,
+    mod_chat:create_room(Host, RoomType, Creator, Element, []), % this will create synchronously the room if needed
+    mod_chat:route(Host, Element, Creator, add, Otherid);
 
 action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, Element, Type, <<"delMember">>, [Otherid], Result) when 
     Type =:= <<"conversationgroup">>;
     Type =:= <<"group">>;
     Type =:= <<"thread">> ->
 
-    ?DEBUG(?MODULE_STRING "[~5w] [~s (~p|~p)] action ~p ~p:~p(~p): ~p", [ ?LINE, _Username, seqid(), _Sid, Element, Type, "delmember", [Otherid], Result ]),
+    ?DEBUG(?MODULE_STRING "[~5w] [~s ] action ~p ~p:~p(~p): ~p", [ ?LINE, _Username, Element, Type, "delmember", [Otherid], Result ]),
+    RoomType = 0,
+    mod_chat:create_room(Host, RoomType, Creator, Element, []), % this will create synchronously the room if needed
+    mod_chat:route(Host, Element, Creator, del, Otherid);
 
-    mod_chat:route(Host, Element, Creator, del, [Otherid]);
+action(#state{user=_Username, sid=_Sid, userid=Userid, server=Host} = _State, Element, Type, <<"quit">>, _, Result) when 
+    Type =:= <<"conversationgroup">> ->
+
+    ?DEBUG(?MODULE_STRING "[~5w] [~s] action ~p ~p:~p(~p): ~p", [ ?LINE, _Username, Element, Type, "quit", [Userid], Result ]),
+    RoomType = 0,
+    mod_chat:create_room(Host, RoomType, Userid, Element, []), % this will create synchronously the room if needed
+    mod_chat:route(Host, Element, Userid, del, Userid);
 
 action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, Element, Type, <<"delChild">>, [Child], _) when 
     Type =:= <<"group">>;
@@ -4639,6 +4649,16 @@ action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, E
         { <<"parent">>, Element},
         { <<"count">>, Count},
         { <<"child">>, Child}]),
+    mod_chat:route(Host, Element, Creator, message, Packet);
+
+action(#state{userid=Creator, server=Host} = _State, Element, Type, <<"update">>, _, _Result) when 
+    Type =:= <<"message">>;
+    Type =:= <<"article">> ->
+
+    RoomType = 0,
+    mod_chat:create_room(Host, RoomType, Creator, Element, []), % this will create synchronously the room if needed
+    Packet = make_packet( _State, <<"update">>, [
+        { <<"child">>, Element}]),
     mod_chat:route(Host, Element, Creator, message, Packet);
 
 % when an addChild has been processed in a page, comgroup, or timeline, this new child must be forwarded to

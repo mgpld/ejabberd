@@ -1,6 +1,6 @@
 -module(hyp_live).
 % Created hyp_live.erl the 13:33:37 (01/01/2015) on core
-% Last Modification of hyp_live.erl at 00:37:28 (10/01/2017) on core
+% Last Modification of hyp_live.erl at 08:19:32 (13/02/2017) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -24,7 +24,7 @@
 
 % API
 -export([
-    add/2,
+    add/2, del/2,
     normal/1,
     message/2, message/3,
     users/1,
@@ -105,9 +105,13 @@ start_link() ->
 cancel() ->
     gen_fsm:send_all_state_event(?MODULE, cancel).
 
-% Add a player
+% Add a member
 add(Pid, Jid) ->
     gen_fsm:send_event(Pid, {add, Jid}).
+
+% Del a member
+del(Pid, Jid) ->
+    gen_fsm:send_event(Pid, {del, Jid}).
 
 message(Pid, Message) ->
     gen_fsm:send_event(Pid, {message, Message}).
@@ -233,13 +237,16 @@ init(_Msg, _, State) ->
 
 %%normal/2
 normal({add, Jid}, #state{ users=Users } = State) ->
-	?DEBUG(?MODULE_STRING " normal: adding user ~p\n", [ Jid ]), 
+	?DEBUG(?MODULE_STRING "[~5w] normal: adding user ~p\n", [ ?LINE, Jid ]), 
     NewUsers = gb_trees:enter(Jid, undefined, Users),
     fsm_next_state(normal, State#state{ users=NewUsers });
 
+% If the process has been recreated because a delMember operation, the Jid will not be found
+% in the Users gb_tree, so we use delete_any to remove it and don't fail if not found
 normal({del, Jid}, #state{ users=Users } = State) ->
-	?DEBUG(?MODULE_STRING " normal: deleting user ~p\n", [ Jid ]), 
-    NewUsers = gb_trees:delete(Jid, Users),
+	?DEBUG(?MODULE_STRING "[~5w] normal: deleting user ~p\n", [ ?LINE, Jid ]), 
+	?DEBUG(?MODULE_STRING "[~5w] normal: users ~p\n", [ ?LINE, gb_trees:to_list(Users) ]), 
+    NewUsers = gb_trees:delete_any(Jid, Users),
     fsm_next_state(normal, State#state{ users=NewUsers });
 
 % Only execute notification for the first message
@@ -318,7 +325,7 @@ test() ->
 %% from, to, type
 %% Purpose Id must be incorporated in the final packet sent to users
 send_message(Message, #state{ roomref=Ref, users=Users, cid=Id } = State) ->
-    From = iolist_to_binary([<<"chat@harmony/">>, Ref]),
+    From = iolist_to_binary([Ref, <<"@harmony/live">>]),
     Msgid = iolist_to_binary([Ref, $. , integer_to_list(Id)]),
     Iter = gb_trees:iterator(Users),
     publish(gb_trees:next(Iter), Msgid, From, Message, State),
@@ -448,6 +455,30 @@ prepare(Type, #state{ roomref=Fqid,  creator=_Userid } = State) when
         {error, Error} ->
             {stop, Error}
     end;
+
+prepare(Type, #state{ roomref=Fqid,  creator=_Userid, users=_Users } = State) when
+    Type =:= <<"message">> ->
+
+    ?DEBUG(?MODULE_STRING "[~5w] realtime message '~p'", [ ?LINE, Fqid ]),
+    %{ok, normal, State};
+
+   case hyp_data:execute(hyd_fqids, read, [Fqid]) of
+       {ok, Props} ->
+          %?DEBUG(?MODULE_STRING "[~5w] '~p': ~p", [ ?LINE, Fqid, Props ]),
+          %{ok, normal, State};
+          %% prepare(undefined, State); %% infinite loop
+          case hyp_data:extract([<<"info">>,<<"parent">>], Props) of
+              undefined ->
+                  {stop, enoent};
+
+              Parent ->
+                  NewState = State#state{ roomref=Parent },
+                  prepare(undefined, NewState)
+          end;
+
+       {error, Error} ->
+           {stop, Error}
+   end; 
 
 prepare(Type, #state{ roomref=Fqid,  creator=_Userid, users=_Users } = State) when
     Type =:= <<"article">> ->
