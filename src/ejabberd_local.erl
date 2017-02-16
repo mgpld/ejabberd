@@ -201,8 +201,8 @@ handle_cast(_Msg, State) -> {noreply, State}.
 handle_info({route, From, To, Packet}, State) ->
     case catch do_route(From, To, Packet) of
       {'EXIT', Reason} ->
-	  ?ERROR_MSG("~p~nwhen processing: ~p",
-		     [Reason, {From, To, Packet}]);
+	  ?ERROR_MSG(?MODULE_STRING "[~5w] ~p~nwhen processing: ~p",
+		     [?LINE, Reason, {From, To, Packet}]);
       _ -> ok
     end,
     {noreply, State};
@@ -257,9 +257,9 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%--------------------------------------------------------------------
 do_route(From, To, Packet) ->
-    ?DEBUG("local route~n\tfrom ~p~n\tto ~p~n\tpacket "
+    ?DEBUG(?MODULE_STRING "[~5w] local route~n\tfrom ~p~n\tto ~p~n\tpacket "
 	   "~P~n",
-	   [From, To, Packet, 8]),
+	   [?LINE, From, To, Packet, 8]),
     if To#jid.luser /= <<"">> ->
 	   ejabberd_sm:route(From, To, Packet);
        To#jid.lresource == <<"">> ->

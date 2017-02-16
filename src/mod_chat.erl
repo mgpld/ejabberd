@@ -51,7 +51,8 @@
     can_use_nick/4]).
 
 -export([
-    existing_room/2
+    existing_room/2,
+    string_to_jid/1
 ]).
 
 -export([
@@ -160,12 +161,12 @@ route(Host, RoomId, From, Function, Args) ->
 
 % Called by the chat_master process
 route(From, ToJid, Message) when is_tuple(ToJid) ->
-    FromJid = jlib:string_to_jid(From),
+    FromJid = string_to_jid(From),
     ejabberd_router:route(FromJid, ToJid, Message);
 
 route(From, To, Message) ->
-    FromJid = jlib:string_to_jid(From),
-    ToJid = jlib:string_to_jid(To),
+    FromJid = string_to_jid(From),
+    ToJid = string_to_jid(To),
     ejabberd_router:route(FromJid, ToJid, Message).
 
 store_room(ServerHost, Host, Name, Opts) ->
@@ -1163,6 +1164,26 @@ import(_LServer, mnesia, #muc_registered{} = R) ->
     mnesia:dirty_write(R);
 import(_, _, _) ->
     pass.
+
+string_to_jid(Data) ->
+    Pattern = ets:lookup_element(jlib, string_to_jid_pattern, 2),
+    case binary:split(Data, Pattern) of
+        [ First, Rest ] ->
+            case binary:split(Rest, Pattern) of
+                [ Server, Resource ] ->
+                    #jid{
+                        user=First, server=Server, resource=Resource,
+                        luser=First, lserver=Server, lresource=Resource };
+                [ Server ] ->
+                    Empty = <<>>,
+                    #jid{
+                        user=First, server=Server, resource=Empty,
+                        luser=First, lserver=Server, lresource=Empty }
+            end;
+        _ ->
+            {error, einval}
+    end.
+                
 
 test() ->
     Opts = [],

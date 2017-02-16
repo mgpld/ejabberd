@@ -266,8 +266,8 @@ handle_cast(_Msg, State) -> {noreply, State}.
 handle_info({route, From, To, Packet}, State) ->
     case catch do_route(From, To, Packet) of
       {'EXIT', Reason} ->
-	  ?ERROR_MSG("~p~nwhen processing: ~p",
-		     [Reason, {From, To, Packet}]);
+	  ?ERROR_MSG(?MODULE_STRING "[~5w] ~p~nwhen processing: ~p",
+		     [?LINE, Reason, {From, To, Packet}]);
       _ -> ok
     end,
     {noreply, State};
@@ -321,9 +321,9 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%--------------------------------------------------------------------
 do_route(OrigFrom, OrigTo, OrigPacket) ->
-    ?DEBUG("route~n\tfrom ~p~n\tto ~p~n\tpacket "
+    ?DEBUG(?MODULE_STRING "[~5w] route~n\tfrom ~p~n\tto ~p~n\tpacket "
 	   "~p~n",
-	   [OrigFrom, OrigTo, OrigPacket]),
+	   [?LINE, OrigFrom, OrigTo, OrigPacket]),
     case ejabberd_hooks:run_fold(filter_packet,
 				 {OrigFrom, OrigTo, OrigPacket}, [])
 	of
