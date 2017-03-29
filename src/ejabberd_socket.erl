@@ -45,7 +45,7 @@
 	 monitor/1,
 	 get_sockmod/1,
 	 get_transport/1,
-	 get_peer_certificate/1,
+	 get_peer_certificate/2,
 	 get_verify_result/1,
 	 close/1,
 	 pp/1,
@@ -62,7 +62,8 @@
 -type socket() :: pid() | inet:socket() |
                   fast_tls:tls_socket() |
 		  ezlib:zlib_socket() |
-		  ejabberd_bosh:bind_socket().
+		  ejabberd_bosh:bosh_socket() |
+		  ejabberd_http_ws:ws_socket().
 
 -record(socket_state, {sockmod = gen_tcp :: sockmod(),
                        socket = self() :: socket(),
@@ -85,7 +86,7 @@
 %%====================================================================
 %% API
 %%====================================================================
--spec start(atom(), sockmod(), socket(), [proplists:propery()])
+-spec start(atom(), sockmod(), socket(), [proplists:property()])
       -> {ok, pid() | independent} | {error, inet:posix() | any()}.
 start(Module, SockMod, Socket, Opts) ->
     case Module:socket_type() of
@@ -210,14 +211,16 @@ send_trailer(SocketData) when ?is_http_socket(SocketData) ->
 send_trailer(SocketData) ->
     send(SocketData, <<"</stream:stream>">>).
 
--spec send(socket_state(), iodata()) -> ok | {error, inet:posix()}.
+-spec send(socket_state(), iodata()) -> ok | {error, closed | inet:posix()}.
 send(#socket_state{sockmod = SockMod, socket = Socket} = SocketData, Data) ->
     ?DEBUG("(~s) Send XML on stream = ~p", [pp(SocketData), Data]),
-    try SockMod:send(Socket, Data)
+    try SockMod:send(Socket, Data) of
+	{error, einval} -> {error, closed};
+	Result -> Result
     catch _:badarg ->
 	    %% Some modules throw badarg exceptions on closed sockets
 	    %% TODO: their code should be improved
-	    {error, einval}
+	    {error, closed}
     end.
 
 -spec send_xml(socket_state(),
@@ -262,8 +265,8 @@ get_transport(#socket_state{sockmod = SockMod,
 	ejabberd_http_ws -> websocket
     end.
 
-get_peer_certificate(SocketData) ->
-    fast_tls:get_peer_certificate(SocketData#socket_state.socket).
+get_peer_certificate(SocketData, Type) ->
+    fast_tls:get_peer_certificate(SocketData#socket_state.socket, Type).
 
 get_verify_result(SocketData) ->
     fast_tls:get_verify_result(SocketData#socket_state.socket).

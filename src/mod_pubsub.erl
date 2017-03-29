@@ -86,13 +86,12 @@
 	 err_unsupported_access_model/0]).
 
 %% API and gen_server callbacks
--export([start_link/2, start/2, stop/1, init/1,
+-export([start/2, stop/1, init/1,
     handle_call/3, handle_cast/2, handle_info/2,
     terminate/2, code_change/3, depends/2]).
 
 -export([send_loop/1, mod_opt_type/1]).
 
--define(PROCNAME, ejabberd_mod_pubsub).
 -define(LOOPNAME, ejabberd_mod_pubsub_loop).
 
 %%====================================================================
@@ -219,20 +218,11 @@
     ).
 
 
-start_link(Host, Opts) ->
-    Proc = gen_mod:get_module_proc(Host, ?PROCNAME),
-    gen_server:start_link({local, Proc}, ?MODULE, [Host, Opts], []).
-
 start(Host, Opts) ->
-    Proc = gen_mod:get_module_proc(Host, ?PROCNAME),
-    ChildSpec = {Proc, {?MODULE, start_link, [Host, Opts]},
-	    transient, 1000, worker, [?MODULE]},
-    supervisor:start_child(ejabberd_sup, ChildSpec).
+    gen_mod:start_child(?MODULE, Host, Opts).
 
 stop(Host) ->
-    Proc = gen_mod:get_module_proc(Host, ?PROCNAME),
-    gen_server:call(Proc, stop),
-    supervisor:delete_child(ejabberd_sup, Proc).
+    gen_mod:stop_child(?MODULE, Host).
 
 %%====================================================================
 %% gen_server callbacks
@@ -248,6 +238,7 @@ stop(Host) ->
 -spec init([binary() | [{_,_}],...]) -> {'ok',state()}.
 
 init([ServerHost, Opts]) ->
+    process_flag(trap_exit, true),
     ?DEBUG("pubsub init ~p ~p", [ServerHost, Opts]),
     Host = gen_mod:get_opt_host(ServerHost, Opts, <<"pubsub.@HOST@">>),
     ejabberd_router:register_route(Host, ServerHost),
@@ -732,7 +723,7 @@ presence(ServerHost, Presence) ->
 	binary(), binary(), jid(),
 	subscribed | unsubscribed | subscribe | unsubscribe) -> boolean().
 out_subscription(User, Server, JID, subscribed) ->
-    Owner = jid:make(User, Server, <<>>),
+    Owner = jid:make(User, Server),
     {PUser, PServer, PResource} = jid:tolower(JID),
     PResources = case PResource of
 	<<>> -> user_resources(PUser, PServer);
@@ -747,7 +738,7 @@ out_subscription(_, _, _, _) ->
 		      subscribe | subscribed | unsubscribe | unsubscribed,
 		      binary()) -> true.
 in_subscription(_, User, Server, Owner, unsubscribed, _) ->
-    unsubscribe_user(jid:make(User, Server, <<>>), Owner),
+    unsubscribe_user(jid:make(User, Server), Owner),
     true;
 in_subscription(_, _, _, _, _, _) ->
     true.
@@ -798,7 +789,7 @@ unsubscribe_user(Host, Entity, Owner) ->
 remove_user(User, Server) ->
     LUser = jid:nodeprep(User),
     LServer = jid:nameprep(Server),
-    Entity = jid:make(LUser, LServer, <<>>),
+    Entity = jid:make(LUser, LServer),
     Host = host(LServer),
     HomeTreeBase = <<"/home/", LServer/binary, "/", LUser/binary>>,
     spawn(fun () ->
@@ -864,12 +855,13 @@ handle_cast(_Msg, State) -> {noreply, State}.
 %% Description: Handling all non call/cast messages
 %%--------------------------------------------------------------------
 %% @private
-handle_info({route, From, To, #iq{} = IQ},
+handle_info({route, #iq{to = To} = IQ},
 	    State) when To#jid.lresource == <<"">> ->
-    ejabberd_router:process_iq(From, To, IQ),
+    ejabberd_router:process_iq(IQ),
     {noreply, State};
-handle_info({route, From, To, Packet}, State) ->
-    case catch do_route(To#jid.lserver, From, To, Packet) of
+handle_info({route, Packet}, State) ->
+    To = xmpp:get_to(Packet),
+    case catch do_route(To#jid.lserver, Packet) of
 	{'EXIT', Reason} -> ?ERROR_MSG("~p", [Reason]);
 	_ -> ok
     end,
@@ -1028,8 +1020,9 @@ process_commands(#iq{type = get, lang = Lang} = IQ) ->
     Txt = <<"Value 'get' of 'type' attribute is not allowed">>,
     xmpp:make_error(IQ, xmpp:err_not_allowed(Txt, Lang)).
 
--spec do_route(binary(), jid(), jid(), stanza()) -> ok.
-do_route(Host, From, To, Packet) ->
+-spec do_route(binary(), stanza()) -> ok.
+do_route(Host, Packet) ->
+    To = xmpp:get_to(Packet),
     case To of
 	#jid{luser = <<>>, lresource = <<>>} ->
 	    case Packet of
@@ -1038,18 +1031,18 @@ do_route(Host, From, To, Packet) ->
 			undefined ->
 			    ok;
 			{error, Err} ->
-			    ejabberd_router:route_error(To, From, Packet, Err);
+			    ejabberd_router:route_error(Packet, Err);
 			AuthResponse ->
 			    handle_authorization_response(
-			      Host, From, To, Packet, AuthResponse)
+			      Host, Packet, AuthResponse)
 		    end;
 		_ ->
 		    Err = xmpp:err_service_unavailable(),
-		    ejabberd_router:route_error(To, From, Packet, Err)
+		    ejabberd_router:route_error(Packet, Err)
 	    end;
 	_ ->
 	    Err = xmpp:err_item_not_found(),
-	    ejabberd_router:route_error(To, From, Packet, Err)
+	    ejabberd_router:route_error(Packet, Err)
     end.
 
 -spec command_disco_info(binary(), binary(), jid()) -> {result, disco_info()}.
@@ -1378,7 +1371,7 @@ adhoc_request(_Host, _ServerHost, _Owner, Other, _Access, _Plugins) ->
 
 -spec send_pending_node_form(binary(), jid(), binary(),
 			     [binary()]) -> adhoc_command() | {error, stanza_error()}.
-send_pending_node_form(Host, Owner, _Lang, Plugins) ->
+send_pending_node_form(Host, Owner, Lang, Plugins) ->
     Filter = fun (Type) ->
 	    lists:member(<<"get-pending">>, plugin_features(Host, Type))
     end,
@@ -1392,7 +1385,7 @@ send_pending_node_form(Host, Owner, _Lang, Plugins) ->
 		{ok, Nodes} ->
 		    XForm = #xdata{type = form,
 				   fields = pubsub_get_pending:encode(
-					      [{node, Nodes}])},
+					      [{node, Nodes}], Lang)},
 		    #adhoc_command{status = executing, action = execute,
 				   xdata = XForm};
 		Err ->
@@ -1421,7 +1414,7 @@ get_pending_nodes(Host, Owner, Plugins) ->
 			       binary()) -> adhoc_command() | {error, stanza_error()}.
 send_pending_auth_events(Host, Node, Owner, Lang) ->
     ?DEBUG("Sending pending auth events for ~s on ~s:~s",
-	   [jid:to_string(Owner), Host, Node]),
+	   [jid:encode(Owner), Host, Node]),
     Action =
 	fun(#pubsub_node{id = Nidx, type = Type}) ->
 		case lists:member(<<"get-pending">>, plugin_features(Host, Type)) of
@@ -1461,7 +1454,7 @@ send_authorization_request(#pubsub_node{nodeid = {Host, Node},
 	   [{node, Node},
 	    {subscriber_jid, Subscriber},
 	    {allow, false}],
-	   fun(T) -> translate:translate(Lang, T) end),
+	   Lang),
     X = #xdata{type = form,
 	       title = translate:translate(
 			 Lang, <<"PubSub subscriber request">>),
@@ -1470,17 +1463,17 @@ send_authorization_request(#pubsub_node{nodeid = {Host, Node},
 				 <<"Choose whether to approve this entity's "
 				   "subscription.">>)],
 	       fields = Fs},
-    Stanza = #message{sub_els = [X]},
+    Stanza = #message{from = service_jid(Host), sub_els = [X]},
     lists:foreach(
       fun (Owner) ->
-	      ejabberd_router:route(service_jid(Host), jid:make(Owner), Stanza)
+	      ejabberd_router:route(xmpp:set_to(Stanza, jid:make(Owner)))
       end, node_owners_action(Host, Type, Nidx, O)).
 
 -spec find_authorization_response(message()) -> undefined |
 						pubsub_subscribe_authorization:result() |
 						{error, stanza_error()}.
 find_authorization_response(Packet) ->
-    case xmpp:get_subtag(Packet, #xdata{}) of
+    case xmpp:get_subtag(Packet, #xdata{type = form}) of
 	#xdata{type = cancel} ->
 	    undefined;
 	#xdata{type = submit, fields = Fs} ->
@@ -1504,12 +1497,12 @@ send_authorization_approval(Host, JID, SNode, Subscription) ->
 			  #ps_subscription{jid = JID,
 					   node = SNode,
 					   type = Subscription}},
-    Stanza = #message{sub_els = [Event]},
-    ejabberd_router:route(service_jid(Host), JID, Stanza).
+    Stanza = #message{from = service_jid(Host), to = JID, sub_els = [Event]},
+    ejabberd_router:route(Stanza).
 
--spec handle_authorization_response(binary(), jid(), jid(), message(),
+-spec handle_authorization_response(binary(), message(),
 				    pubsub_subscribe_authorization:result()) -> ok.
-handle_authorization_response(Host, From, To, Packet, Response) ->
+handle_authorization_response(Host, #message{from = From} = Packet, Response) ->
     Node = proplists:get_value(node, Response),
     Subscriber = proplists:get_value(subscriber_jid, Response),
     Allow = proplists:get_value(allow, Response),
@@ -1528,13 +1521,13 @@ handle_authorization_response(Host, From, To, Packet, Response) ->
 	end,
     case transaction(Host, Node, Action, sync_dirty) of
 	{error, Error} ->
-	    ejabberd_router:route_error(To, From, Packet, Error);
+	    ejabberd_router:route_error(Packet, Error);
 	{result, {_, _NewSubscription}} ->
 	    %% XXX: notify about subscription state change, section 12.11
 	    ok;
 	_ ->
 	    Err = xmpp:err_internal_server_error(),
-	    ejabberd_router:route_error(To, From, Packet, Err)
+	    ejabberd_router:route_error(Packet, Err)
     end.
 
 -spec update_auth(binary(), binary(), _, _, jid() | error, boolean(), _) ->
@@ -1805,11 +1798,11 @@ subscribe_node(Host, Node, From, JID, Configuration) ->
     Reply = fun (Subscription) ->
 	    Sub = case Subscription of
 		      {subscribed, SubId} ->
-			  #ps_subscription{type = subscribed, subid = SubId};
+			  #ps_subscription{jid = JID, type = subscribed, subid = SubId};
 		      Other ->
-			  #ps_subscription{type = Other}
+			  #ps_subscription{jid = JID, type = Other}
 		  end,
-	    #pubsub{subscription = Sub#ps_subscription{jid = Subscriber, node = Node}}
+	    #pubsub{subscription = Sub#ps_subscription{node = Node}}
     end,
     case transaction(Host, Node, Action, sync_dirty) of
 	{result, {TNode, {Result, subscribed, SubId, send_last}}} ->
@@ -2240,7 +2233,8 @@ dispatch_items({FromU, FromS, FromR} = From, {ToU, ToS, ToR} = To,
 		      Stanza}
     end;
 dispatch_items(From, To, _Node, Stanza) ->
-    ejabberd_router:route(service_jid(From), jid:make(To), Stanza).
+    ejabberd_router:route(
+      xmpp:set_from_to(Stanza, service_jid(From), jid:make(To))).
 
 %% @doc <p>Return the list of affiliations as an XMPP response.</p>
 -spec get_affiliations(host(), binary(), jid(), [binary()]) ->
@@ -2612,12 +2606,14 @@ set_subscriptions(Host, Node, From, Entities) ->
     Owner = jid:tolower(jid:remove_resource(From)),
     Notify = fun(#ps_subscription{jid = JID, type = Sub}) ->
 		     Stanza = #message{
+				 from = service_jid(Host),
+				 to = JID,
 				 sub_els = [#ps_event{
 					       subscription = #ps_subscription{
 								 jid = JID,
 								 type = Sub,
 								 node = Node}}]},
-		     ejabberd_router:route(service_jid(Host), JID, Stanza)
+		     ejabberd_router:route(Stanza)
 	     end,
     Action =
 	fun(#pubsub_node{type = Type, id = Nidx, owners = O}) ->
@@ -2823,7 +2819,7 @@ broadcast_publish_item(Host, Node, Nidx, Type, NodeOptions, ItemId, From, Payloa
 				EventItem0;
 			    publisher ->
 				EventItem0#ps_item{
-				  publisher = jid:to_string(From)};
+				  publisher = jid:encode(From)};
 			    none ->
 				EventItem0
 			end,
@@ -3011,7 +3007,8 @@ broadcast_stanza(Host, _Node, _Nidx, _Type, NodeOptions, SubsByDepth, NotifyType
 			add_shim_headers(Stanza, subid_shim(SubIDs))
 		end,
 		lists:foreach(fun(To) ->
-			    ejabberd_router:route(From, jid:make(To), StanzaToSend)
+			    ejabberd_router:route(
+			      xmpp:set_from_to(StanzaToSend, From, jid:make(To)))
 		    end, LJIDs)
 	end, SubIDsByJID).
 
@@ -3026,7 +3023,7 @@ broadcast_stanza({LUser, LServer, LResource}, Publisher, Node, Nidx, Type, NodeO
 	    %% See XEP-0163 1.1 section 4.3.1
     ejabberd_sm:route(jid:make(LUser, LServer, SenderResource),
 		      {pep_message, <<((Node))/binary, "+notify">>,
-		       jid:make(LUser, LServer, <<"">>),
+		       jid:make(LUser, LServer),
 		       add_extended_headers(
 			 Stanza, extended_headers([Publisher]))});
 broadcast_stanza(Host, _Publisher, Node, Nidx, Type, NodeOptions, SubsByDepth, NotifyType, BaseStanza, SHIM) ->
@@ -3043,7 +3040,7 @@ c2s_handle_info(#{server := Server} = C2SState,
 		  true ->
 		      To = jid:make(USR),
 		      NewPacket = xmpp:set_from_to(Packet, From, To),
-		      ejabberd_router:route(From, To, NewPacket);
+		      ejabberd_router:route(NewPacket);
 		  false ->
 		      ok
 	      end
@@ -3058,7 +3055,7 @@ c2s_handle_info(#{server := Server} = C2SState,
 	    case lists:member(Feature, Features) of
 		true ->
 		    NewPacket = xmpp:set_from_to(Packet, From, To),
-		    ejabberd_router:route(From, To, NewPacket);
+		    ejabberd_router:route(NewPacket);
 		false ->
 		    ok
 	    end;
@@ -3284,7 +3281,7 @@ get_configure_xfields(_Type, Options, Lang, Groups) ->
 	   (Opt) ->
 		Opt
 	end, Options),
-      fun(Txt) -> translate:translate(Lang, Txt) end).
+      Lang).
 
 %%<p>There are several reasons why the node configuration request might fail:</p>
 %%<ul>
@@ -3426,10 +3423,15 @@ set_cached_item({_, ServerHost, _}, Nidx, ItemId, Publisher, Payload) ->
     set_cached_item(ServerHost, Nidx, ItemId, Publisher, Payload);
 set_cached_item(Host, Nidx, ItemId, Publisher, Payload) ->
     case is_last_item_cache_enabled(Host) of
-	true -> mnesia:dirty_write({pubsub_last_item, {Host, Nidx}, ItemId,
-		    {p1_time_compat:timestamp(), jid:tolower(jid:remove_resource(Publisher))},
-		    Payload});
-	_ -> ok
+	true ->
+	    Stamp = {p1_time_compat:timestamp(), jid:tolower(jid:remove_resource(Publisher))},
+	    Item = #pubsub_last_item{nodeid = {Host, Nidx},
+				     itemid = ItemId,
+				     creation = Stamp,
+				     payload = Payload},
+	    mnesia:dirty_write(Item);
+	_ ->
+	    ok
     end.
 
 -spec unset_cached_item(host(), nodeIdx()) -> ok.
@@ -3448,9 +3450,7 @@ get_cached_item(Host, Nidx) ->
     case is_last_item_cache_enabled(Host) of
 	true ->
 	    case mnesia:dirty_read({pubsub_last_item, {Host, Nidx}}) of
-		[#pubsub_last_item{itemid = {Host, ItemId}, creation = Creation, payload = Payload}] ->
-		    %            [{pubsub_last_item, Nidx, ItemId, Creation,
-		    %              Payload}] ->
+		[#pubsub_last_item{itemid = ItemId, creation = Creation, payload = Payload}] ->
 		    #pubsub_item{itemid = {ItemId, Nidx},
 			payload = Payload, creation = Creation,
 			modification = Creation};

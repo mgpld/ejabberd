@@ -28,7 +28,7 @@
 -behaviour(gen_mod).
 
 %% gen_mod callbacks
--export([start/2, stop/1]).
+-export([start/2, stop/1, reload/3]).
 
 -export([update_presence/1, vcard_set/3, export/1,
 	 import_info/0, import/5, import_start/2,
@@ -64,6 +64,16 @@ stop(Host) ->
 			  vcard_set, 100),
     ok.
 
+reload(Host, NewOpts, OldOpts) ->
+    NewMod = gen_mod:db_mod(Host, NewOpts, ?MODULE),
+    OldMod = gen_mod:db_mod(Host, OldOpts, ?MODULE),
+    if NewMod /= OldMod ->
+	    NewMod:init(Host, NewOpts);
+       true ->
+	    ok
+    end,
+    ok.
+
 depends(_Host, _Opts) ->
     [].
 
@@ -89,7 +99,7 @@ vcard_set(LUser, LServer, VCARD) ->
       <<>> -> remove_xupdate(LUser, LServer);
       BinVal ->
 	  add_xupdate(LUser, LServer,
-		      p1_sha:sha(jlib:decode_base64(BinVal)))
+		      str:sha(jlib:decode_base64(BinVal)))
     end,
     ejabberd_sm:force_update_presence(US).
 

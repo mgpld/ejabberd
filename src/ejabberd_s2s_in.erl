@@ -42,7 +42,8 @@
 -export([handle_unexpected_info/2, handle_unexpected_cast/2,
 	 reject_unauthenticated_packet/2, process_closed/2]).
 %% API
--export([stop/1, close/1, send/2, update_state/2, establish/1, add_hooks/0]).
+-export([stop/1, close/1, send/2, update_state/2, establish/1,
+	 host_up/1, host_down/1]).
 
 -include("ejabberd.hrl").
 -include("xmpp.hrl").
@@ -90,19 +91,27 @@ establish(State) ->
 update_state(Ref, Callback) ->
     xmpp_stream_in:cast(Ref, {update_state, Callback}).
 
--spec add_hooks() -> ok.
-add_hooks() ->
-    lists:foreach(
-      fun(Host) ->
-	      ejabberd_hooks:add(s2s_in_closed, Host, ?MODULE,
-				 process_closed, 100),
-	      ejabberd_hooks:add(s2s_in_unauthenticated_packet, Host, ?MODULE,
-				 reject_unauthenticated_packet, 100),
-	      ejabberd_hooks:add(s2s_in_handle_info, Host, ?MODULE,
-				 handle_unexpected_info, 100),
-	      ejabberd_hooks:add(s2s_in_handle_cast, Host, ?MODULE,
-				 handle_unexpected_cast, 100)
-      end, ?MYHOSTS).
+-spec host_up(binary()) -> ok.
+host_up(Host) ->
+    ejabberd_hooks:add(s2s_in_closed, Host, ?MODULE,
+		       process_closed, 100),
+    ejabberd_hooks:add(s2s_in_unauthenticated_packet, Host, ?MODULE,
+		       reject_unauthenticated_packet, 100),
+    ejabberd_hooks:add(s2s_in_handle_info, Host, ?MODULE,
+		       handle_unexpected_info, 100),
+    ejabberd_hooks:add(s2s_in_handle_cast, Host, ?MODULE,
+		       handle_unexpected_cast, 100).
+
+-spec host_down(binary()) -> ok.
+host_down(Host) ->
+    ejabberd_hooks:delete(s2s_in_closed, Host, ?MODULE,
+			  process_closed, 100),
+    ejabberd_hooks:delete(s2s_in_unauthenticated_packet, Host, ?MODULE,
+			  reject_unauthenticated_packet, 100),
+    ejabberd_hooks:delete(s2s_in_handle_info, Host, ?MODULE,
+			  handle_unexpected_info, 100),
+    ejabberd_hooks:delete(s2s_in_handle_cast, Host, ?MODULE,
+			  handle_unexpected_cast, 100).
 
 %%%===================================================================
 %%% Hooks
@@ -159,7 +168,8 @@ handle_stream_start(_StreamStart, #{lserver := LServer} = State) ->
     end.
 
 handle_stream_end(Reason, #{server_host := LServer} = State) ->
-    ejabberd_hooks:run_fold(s2s_in_closed, LServer, State, [Reason]).
+    State1 = State#{stop_reason => Reason},
+    ejabberd_hooks:run_fold(s2s_in_closed, LServer, State1, [Reason]).
 
 handle_stream_established(State) ->
     set_idle_timeout(State#{established => true}).
@@ -200,7 +210,8 @@ handle_unauthenticated_packet(Pkt, #{server_host := LServer} = State) ->
 
 handle_authenticated_packet(Pkt, #{server_host := LServer} = State) when not ?is_stanza(Pkt) ->
     ejabberd_hooks:run_fold(s2s_in_authenticated_packet, LServer, State, [Pkt]);
-handle_authenticated_packet(Pkt, State) ->
+handle_authenticated_packet(Pkt0, #{ip := {IP, _}} = State) ->
+    Pkt = xmpp:put_meta(Pkt0, ip, IP),
     From = xmpp:get_from(Pkt),
     To = xmpp:get_to(Pkt),
     case check_from_to(From, To, State) of
@@ -212,7 +223,7 @@ handle_authenticated_packet(Pkt, State) ->
 						     {Pkt, State1}, []),
 	    case Pkt1 of
 		drop -> ok;
-		_ -> ejabberd_router:route(From, To, Pkt1)
+		_ -> ejabberd_router:route(Pkt1)
     end,
 	    State2;
 	{error, Err} ->
@@ -274,7 +285,15 @@ handle_cast(Msg, #{server_host := LServer} = State) ->
 handle_info(Info, #{server_host := LServer} = State) ->
     ejabberd_hooks:run_fold(s2s_in_handle_info, LServer, State, [Info]).
 
-terminate(Reason, #{auth_domains := AuthDomains}) ->
+terminate(Reason, #{auth_domains := AuthDomains,
+		    sockmod := SockMod, socket := Socket} = State) ->
+    case maps:get(stop_reason, State, undefined) of
+	{tls, _} = Err ->
+	    ?ERROR_MSG("(~s) Failed to secure inbound s2s connection: ~s",
+		       [SockMod:pp(Socket), xmpp_stream_in:format_error(Err)]);
+	_ ->
+	    ok
+    end,
     case Reason of
       {process_limit, _} ->
 	    sets:fold(

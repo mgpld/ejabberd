@@ -20,7 +20,7 @@
 %%%
 %%%-------------------------------------------------------------------
 -module(xmpp_stream_out).
--define(GEN_SERVER, gen_server).
+-define(GEN_SERVER, p1_server).
 -behaviour(?GEN_SERVER).
 
 -protocol({rfc, 6120}).
@@ -59,7 +59,7 @@
 		       {auth, atom() | binary() | string()} |
 		       {socket, inet:posix() | closed | timeout} |
 		       internal_failure.
-
+-export_type([state/0, stop_reason/0]).
 -callback init(list()) -> {ok, state()} | {error, term()} | ignore.
 -callback handle_cast(term(), state()) -> state().
 -callback handle_call(term(), term(), state()) -> state().
@@ -518,12 +518,18 @@ process_features(#stream_features{sub_els = Els} = StreamFeatures,
 		false when TLSRequired and not Encrypted ->
 		    Txt = <<"Use of STARTTLS required">>,
 		    send_pkt(State1, xmpp:serr_policy_violation(Txt, Lang));
+		false when not Encrypted ->
+		    process_sasl_failure(
+		      <<"Peer doesn't support STARTTLS">>, State1);
 		#starttls{required = true} when not TLSAvailable and not Encrypted ->
 		    Txt = <<"Use of STARTTLS forbidden">>,
 		    send_pkt(State1, xmpp:serr_unsupported_feature(Txt, Lang));
 		#starttls{} when TLSAvailable and not Encrypted ->
 		    State2 = State1#{stream_state => wait_for_starttls_response},
 		    send_pkt(State2, #starttls{});
+		#starttls{} when not Encrypted ->
+		    process_sasl_failure(
+		      <<"STARTTLS is disabled in local configuration">>, State1);
 		_ ->
 		    State2 = process_cert_verification(State1),
 		    case is_disconnected(State2) of
@@ -534,8 +540,7 @@ process_features(#stream_features{sub_els = Els} = StreamFeatures,
 				    process_sasl_mechanisms(Mechs, State2);
 				false ->
 				    process_sasl_failure(
-				      #sasl_failure{reason = 'invalid-mechanism'},
-				      State2)
+				      <<"Peer provided no SASL mechanisms">>, State2)
 			    end
 		    end
 	    end
@@ -560,11 +565,11 @@ process_sasl_mechanisms(Mechs, #{user := User, server := Server} = State) ->
     case lists:member(<<"EXTERNAL">>, Mechs) of
 	true ->
 	    State1 = State#{stream_state => wait_for_sasl_response},
-	    Authzid = jid:to_string(jid:make(User, Server)),
+	    Authzid = jid:encode(jid:make(User, Server)),
 	    send_pkt(State1, #sasl_auth{mechanism = Mech, text = Authzid});
 	false ->
 	    process_sasl_failure(
-	      #sasl_failure{reason = 'invalid-mechanism'}, State)
+	      <<"Peer doesn't support EXTERNAL authentication">>, State)
     end.
 
 -spec process_starttls(state()) -> state().
@@ -624,22 +629,26 @@ process_cert_verification(State) ->
 process_sasl_success(#{mod := Mod,
 		       sockmod := SockMod,
 		       socket := Socket} = State) ->
-    State1 = try Mod:handle_auth_success(<<"EXTERNAL">>, State)
-	     catch _:undef -> State
-	     end,
-    case is_disconnected(State1) of
-	true -> State1;
+    SockMod:reset_stream(Socket),
+    State1 = State#{stream_id => new_id(),
+		    stream_restarted => true,
+		    stream_state => wait_for_stream,
+		    stream_authenticated => true},
+    State2 = send_header(State1),
+    case is_disconnected(State2) of
+	true -> State2;
 	false ->
-	    SockMod:reset_stream(Socket),
-	    State2 = State1#{stream_id => new_id(),
-			     stream_restarted => true,
-			     stream_state => wait_for_stream,
-			     stream_authenticated => true},
-	    send_header(State2)
+	    try Mod:handle_auth_success(<<"EXTERNAL">>, State2)
+	    catch _:undef -> State2
+	    end
     end.
 
--spec process_sasl_failure(sasl_failure(), state()) -> state().
-process_sasl_failure(#sasl_failure{reason = Reason}, #{mod := Mod} = State) ->
+-spec process_sasl_failure(sasl_failure() | binary(), state()) -> state().
+process_sasl_failure(#sasl_failure{} = Failure, State) ->
+    Reason = format("Peer responded with error: ~s",
+		    [format_sasl_failure(Failure)]),
+    process_sasl_failure(Reason, State);
+process_sasl_failure(Reason, #{mod := Mod} = State) ->
     try Mod:handle_auth_failure(<<"EXTERNAL">>, {auth, Reason}, State)
     catch _:undef -> process_stream_end({auth, Reason}, State)
     end.
@@ -761,6 +770,8 @@ select_lang(Lang, <<"">>) -> Lang;
 select_lang(_, Lang) -> Lang.
 
 -spec format_inet_error(atom()) -> string().
+format_inet_error(closed) ->
+    "connection closed";
 format_inet_error(Reason) ->
     case inet:format_error(Reason) of
 	"unknown POSIX error" -> atom_to_list(Reason);
@@ -787,6 +798,17 @@ format_tls_error(Reason) when is_atom(Reason) ->
 format_tls_error(Reason) ->
     binary_to_list(Reason).
 
+format_sasl_failure(#sasl_failure{reason = Reason, text = Txt}) ->
+    Slogan = case Reason of
+		 undefined -> "no reason";
+		 _ -> atom_to_list(Reason)
+	     end,
+    case xmpp:get_text(Txt) of
+	<<"">> -> Slogan;
+	Data ->
+	    binary_to_list(Data) ++ " (" ++ Slogan ++ ")"
+    end.
+		      
 -spec format(io:format(), list()) -> binary().
 format(Fmt, Args) ->
     iolist_to_binary(io_lib:format(Fmt, Args)).
@@ -794,6 +816,7 @@ format(Fmt, Args) ->
 %%%===================================================================
 %%% Connection stuff
 %%%===================================================================
+-spec idna_to_ascii(binary()) -> binary() | false.
 idna_to_ascii(<<$[, _/binary>> = Host) ->
     %% This is an IPv6 address in 'IP-literal' format (as per RFC7622)
     %% We remove brackets here
@@ -813,7 +836,7 @@ idna_to_ascii(Host) ->
 	{error, _} -> ejabberd_idna:domain_utf8_to_ascii(Host)
     end.
 
--spec resolve(string(), state()) -> {ok, [host_port()]} | network_error().
+-spec resolve(string(), state()) -> {ok, [ip_port()]} | network_error().
 resolve(Host, State) ->
     case srv_lookup(Host, State) of
 	{error, _Reason} ->
@@ -864,30 +887,43 @@ a_lookup(HostPorts, State) ->
     HostPortFamilies = [{Host, Port, Family}
 			|| {Host, Port} <- HostPorts,
 			   Family <- get_address_families(State)],
-    a_lookup(HostPortFamilies, State, {error, nxdomain}).
+    a_lookup(HostPortFamilies, State, [], {error, nxdomain}).
 
 -spec a_lookup([{inet:hostname(), inet:port_number(), inet:address_family()}],
-	       state(), network_error()) -> {ok, [ip_port()]} | network_error().
-a_lookup([{Host, Port, Family}|HostPortFamilies], State, _) ->
+	       state(), [ip_port()], network_error()) -> {ok, [ip_port()]} | network_error().
+a_lookup([{Host, Port, Family}|HostPortFamilies], State, Acc, Err) ->
     Timeout = get_dns_timeout(State),
     Retries = get_dns_retries(State),
     case a_lookup(Host, Port, Family, Timeout, Retries) of
-	{error, _} = Err ->
-	    a_lookup(HostPortFamilies, State, Err);
+	{error, Reason} ->
+	    a_lookup(HostPortFamilies, State, Acc, {error, Reason});
 	{ok, AddrPorts} ->
-	    {ok, AddrPorts}
+	    a_lookup(HostPortFamilies, State, Acc ++ AddrPorts, Err)
     end;
-a_lookup([], _State, Err) ->
-    Err.
+a_lookup([], _State, [], Err) ->
+    Err;
+a_lookup([], _State, Acc, _) ->
+    {ok, Acc}.
 
 -spec a_lookup(inet:hostname(), inet:port_number(), inet:address_family(),
 	       timeout(), integer()) -> {ok, [ip_port()]} | network_error().
 a_lookup(_Host, _Port, _Family, _Timeout, Retries) when Retries < 1 ->
     {error, timeout};
 a_lookup(Host, Port, Family, Timeout, Retries) ->
+    Start = p1_time_compat:monotonic_time(milli_seconds),
     case inet:gethostbyname(Host, Family, Timeout) of
-	{error, timeout} ->
-	    a_lookup(Host, Port, Family, Timeout, Retries - 1);
+	{error, nxdomain} = Err ->
+	    %% inet:gethostbyname/3 doesn't return {error, timeout},
+	    %% so we should check if 'nxdomain' is in fact a result
+	    %% of a timeout.
+	    %% We also cannot use inet_res:gethostbyname/3 because
+	    %% it ignores DNS configuration settings (/etc/hosts, etc)
+	    End = p1_time_compat:monotonic_time(milli_seconds),
+	    if (End - Start) >= Timeout ->
+		    a_lookup(Host, Port, Family, Timeout, Retries - 1);
+	       true ->
+		    Err
+	    end;
 	{error, _} = Err ->
 	    Err;
 	{ok, HostEntry} ->
@@ -939,16 +975,18 @@ connect(AddrPorts, #{sockmod := SockMod} = State) ->
 		     {ok, term(), ip_port()} | network_error().
 connect([{Addr, Port}|AddrPorts], SockMod, Timeout, _) ->
     Type = get_addr_type(Addr),
-    case SockMod:connect(Addr, Port,
-			 [binary, {packet, 0},
-			  {send_timeout, ?TCP_SEND_TIMEOUT},
-			  {send_timeout_close, true},
-			  {active, false}, Type],
-			 Timeout) of
+    try SockMod:connect(Addr, Port,
+			[binary, {packet, 0},
+			 {send_timeout, ?TCP_SEND_TIMEOUT},
+			 {send_timeout_close, true},
+			 {active, false}, Type],
+			Timeout) of
 	{ok, Socket} ->
 	    {ok, Socket, {Addr, Port}};
 	Err ->
 	    connect(AddrPorts, SockMod, Timeout, Err)
+    catch _:badarg ->
+	    connect(AddrPorts, SockMod, Timeout, {error, einval})
     end;
 connect([], _SockMod, _Timeout, Err) ->
     Err.

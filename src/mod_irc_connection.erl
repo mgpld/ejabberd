@@ -46,11 +46,10 @@
 -define(SETS, gb_sets).
 
 -record(state,
-	{socket                :: inet:socket(),
+	{socket                :: inet:socket() | undefined,
          encoding = <<"">>     :: binary(),
          port = 0              :: inet:port_number(),
          password = <<"">>     :: binary(),
-         queue = queue:new()   :: ?TQUEUE,
          user = #jid{}         :: jid(),
          host = <<"">>         :: binary(),
 	 server = <<"">>       :: binary(),
@@ -59,7 +58,7 @@
 	 realname = <<"">>        :: binary(),
          nick = <<"">>         :: binary(),
          channels = dict:new() :: ?TDICT,
-         nickchannel           :: binary(),
+         nickchannel           :: binary() | undefined,
 	 webirc_password       :: binary(),
          mod = mod_irc         :: atom(),
 	 inbuf = <<"">>        :: binary(),
@@ -112,7 +111,7 @@ init([From, Host, Server, Username, Encoding, Port,
       Password, Ident, RemoteAddr, RealName, WebircPassword, Mod]) ->
     gen_fsm:send_event(self(), init),
     {ok, open_socket,
-     #state{queue = queue:new(), mod = Mod,
+     #state{mod = Mod,
 	    encoding = Encoding, port = Port, password = Password,
 	    user = From, nick = Username, host = Host,
 	    server = Server, ident = Ident, realname = RealName,
@@ -284,13 +283,13 @@ handle_info({route_chan, Channel, _Resource, #message{type = groupchat} = Msg},
     case xmpp:get_text(Msg#message.subject) of
 	<<"">> ->
 	    ejabberd_router:route(
-	      jid:make(
-		iolist_to_binary([Channel,
-				  <<"%">>,
-				  StateData#state.server]),
-		StateData#state.host,
-		StateData#state.nick),
-	      StateData#state.user, Msg),
+	      xmpp:set_from_to(
+		Msg,
+		jid:make(
+		  iolist_to_binary([Channel, <<"%">>, StateData#state.server]),
+		  StateData#state.host,
+		  StateData#state.nick),
+		StateData#state.user)),
 	    Body = xmpp:get_text(Msg#message.body),
 	    case Body of
 		<<"/quote ", Rest/binary>> ->
@@ -401,34 +400,31 @@ handle_info({route_chan, Channel, Resource,
 					[Resource]),
 		    _ = (?SEND(Res)),
 		    Err = xmpp:err_feature_not_implemented(),
-		    ejabberd_router:route_error(To, From, Packet, Err);
+		    ejabberd_router:route_error(Packet, Err);
 		?NS_TIME ->
 		    Res = io_lib:format("PRIVMSG ~s :\001TIME\001\r\n",
 					[Resource]),
 		    _ = (?SEND(Res)),
 		    Err = xmpp:err_feature_not_implemented(),
-		    ejabberd_router:route_error(To, From, Packet, Err);
+		    ejabberd_router:route_error(Packet, Err);
 		?NS_VCARD ->
 		    Res = io_lib:format("WHOIS ~s \r\n", [Resource]),
 		    _ = (?SEND(Res)),
 		    Err = xmpp:err_feature_not_implemented(),
-		    ejabberd_router:route_error(To, From, Packet, Err);
+		    ejabberd_router:route_error(Packet, Err);
 		_ ->
 		    Err = xmpp:err_feature_not_implemented(),
-		    ejabberd_router:route_error(To, From, Packet, Err)
+		    ejabberd_router:route_error(Packet, Err)
 	    end
     catch _:{xmpp_codec, Why} ->
 	    Err = xmpp:err_bad_request(
 		    xmpp:format_error(Why), xmpp:get_lang(Packet)),
-	    ejabberd_router:route_error(To, From, Packet, Err)
+	    ejabberd_router:route_error(Packet, Err)
     end,
     {next_state, StateName, StateData};
-handle_info({route_chan, Channel, _, #iq{} = IQ}, StateName, StateData) ->
-    From = StateData#state.user,
-    To = jid:make(iolist_to_binary([Channel, <<"%">>, StateData#state.server]),
-		  StateData#state.host, StateData#state.nick),
+handle_info({route_chan, _Channel, _, #iq{} = IQ}, StateName, StateData) ->
     Err = xmpp:err_feature_not_implemented(),
-    ejabberd_router:route_error(To, From, IQ, Err),
+    ejabberd_router:route_error(IQ, Err),
     {next_state, StateName, StateData};
 handle_info({route_nick, Nick, #message{type = chat} = Msg},
 	    StateName, StateData) ->
@@ -670,10 +666,12 @@ terminate(_Reason, _StateName, FullStateData) ->
 -spec send_stanza(binary(), state(), stanza()) -> ok.
 send_stanza(Chan, StateData, Stanza) ->
     ejabberd_router:route(
-      jid:make(iolist_to_binary([Chan, <<"%">>, StateData#state.server]),
-	       StateData#state.host,
-	       StateData#state.nick),
-      StateData#state.user, Stanza).
+      xmpp:set_from_to(
+	Stanza,
+	jid:make(iolist_to_binary([Chan, <<"%">>, StateData#state.server]),
+		 StateData#state.host,
+		 StateData#state.nick),
+	StateData#state.user)).
 
 -spec send_stanza_unavailable(binary(), state()) -> ok.
 send_stanza_unavailable(Chan, StateData) ->
@@ -696,23 +694,12 @@ send_text(#state{socket = Socket, encoding = Encoding},
     CText = iconv:convert(<<"utf-8">>, Encoding, iolist_to_binary(Text)),
     gen_tcp:send(Socket, CText).
 
-%send_queue(Socket, Q) ->
-%    case queue:out(Q) of
-%	{{value, El}, Q1} ->
-%	    send_element(Socket, El),
-%	    send_queue(Socket, Q1);
-%	{empty, Q1} ->
-%	    ok
-%    end.
-
 bounce_messages(Reason) ->
     receive
 	{send_element, El} ->
-	    From = xmpp:get_from(El),
-	    To = xmpp:get_to(El),
 	    Lang = xmpp:get_lang(El),
 	    Err = xmpp:err_internal_server_error(Reason, Lang),
-	    ejabberd_router:route_error(To, From, El, Err),
+	    ejabberd_router:route_error(El, Err),
 	    bounce_messages(Reason)
     after 0 -> ok
     end.
@@ -768,10 +755,10 @@ process_channel_list_user(StateData, Chan, User) ->
 				   _ -> {User1, member, participant}
 				 end,
     ejabberd_router:route(
-      jid:make(iolist_to_binary([Chan, <<"%">>, StateData#state.server]),
-	       StateData#state.host, User2),
-      StateData#state.user,
       #presence{
+	 from = jid:make(iolist_to_binary([Chan, <<"%">>, StateData#state.server]),
+			 StateData#state.host, User2),
+	 to = StateData#state.user,
 	 sub_els = [#muc_user{items = [#muc_item{affiliation = Affiliation,
 						 role = Role}]}]}),
     case catch dict:update(Chan,
@@ -787,10 +774,10 @@ process_channel_topic(StateData, Chan, String) ->
     Subject = filter_message(Msg),
     Body = <<"Topic for #", Chan/binary, ": ", Subject/binary>>,
     ejabberd_router:route(
-      jid:make(iolist_to_binary([Chan, <<"%">>, StateData#state.server]),
-	       StateData#state.host),
-      StateData#state.user,
-      #message{type = groupchat,
+      #message{from = jid:make(iolist_to_binary([Chan, <<"%">>, StateData#state.server]),
+			       StateData#state.host),
+	       to = StateData#state.user,
+	       type = groupchat,
 	       subject = xmpp:mk_text(Subject),
 	       body = xmpp:mk_text(Body)}).
 
@@ -808,10 +795,10 @@ process_channel_topic_who(StateData, Chan, String) ->
 	   end,
     Msg2 = filter_message(Msg1),
     ejabberd_router:route(
-      jid:make(iolist_to_binary([Chan, <<"%">>, StateData#state.server]),
-	       StateData#state.host, <<"">>),
-      StateData#state.user,
-      #message{type = groupchat, body = xmpp:mk_text(Msg2)}).
+      #message{from = jid:make(iolist_to_binary([Chan, <<"%">>, StateData#state.server]),
+			       StateData#state.host, <<"">>),
+	       to = StateData#state.user,
+	       type = groupchat, body = xmpp:mk_text(Msg2)}).
 
 error_nick_in_use(_StateData, String) ->
     Msg = ejabberd_regexp:replace(String,
@@ -827,11 +814,11 @@ process_nick_in_use(StateData, String) ->
 	  StateData;
       Chan ->
 	  ejabberd_router:route(
-	    jid:make(iolist_to_binary([Chan, <<"%">>, StateData#state.server]),
-		     StateData#state.host,
-		     StateData#state.nick),
-	    StateData#state.user,
-	    xmpp:make_error(#presence{}, Error)),
+	    #presence{from = jid:make(iolist_to_binary([Chan, <<"%">>, StateData#state.server]),
+				      StateData#state.host,
+				      StateData#state.nick),
+		      to = StateData#state.user,
+		      type = error, sub_els = [Error]}),
 	    StateData#state{nickchannel = undefined}
     end.
 
@@ -840,30 +827,30 @@ process_num_error(StateData, String) ->
     lists:foreach(
       fun(Chan) ->
 	      ejabberd_router:route(
-		jid:make(iolist_to_binary([Chan, $%, StateData#state.server]),
-			 StateData#state.host,
-			 StateData#state.nick),
-		StateData#state.user,
-		xmpp:make_error(#message{}, Error))
+		#message{from = jid:make(iolist_to_binary([Chan, $%, StateData#state.server]),
+					 StateData#state.host,
+					 StateData#state.nick),
+			 to = StateData#state.user,
+			 type = error, sub_els = [Error]})
       end, dict:fetch_keys(StateData#state.channels)),
     StateData.
 
 process_endofwhois(StateData, _String, Nick) ->
     ejabberd_router:route(
-      jid:make(iolist_to_binary([Nick, <<"!">>, StateData#state.server]),
-	       StateData#state.host),
-      StateData#state.user,
-      #message{type = chat, body = xmpp:mk_text(<<"End of WHOIS">>)}).
+      #message{from = jid:make(iolist_to_binary([Nick, <<"!">>, StateData#state.server]),
+			       StateData#state.host),
+	       to = StateData#state.user,
+	       type = chat, body = xmpp:mk_text(<<"End of WHOIS">>)}).
 
 process_whois311(StateData, String, Nick, Ident,
 		 Irchost) ->
     Fullname = ejabberd_regexp:replace(String,
 				       <<".*311[^:]*:">>, <<"">>),
     ejabberd_router:route(
-      jid:make(iolist_to_binary([Nick, <<"!">>, StateData#state.server]),
-	       StateData#state.host, <<"">>),
-      StateData#state.user,
-      #message{type = chat,
+      #message{from = jid:make(iolist_to_binary([Nick, <<"!">>, StateData#state.server]),
+			       StateData#state.host, <<"">>),
+	       to = StateData#state.user,
+	       type = chat,
 	       body = xmpp:mk_text(
 			iolist_to_binary(
 			  [<<"WHOIS: ">>, Nick, <<" is ">>, Ident,
@@ -873,10 +860,10 @@ process_whois312(StateData, String, Nick, Ircserver) ->
     Ircserverdesc = ejabberd_regexp:replace(String,
 					    <<".*312[^:]*:">>, <<"">>),
     ejabberd_router:route(
-      jid:make(iolist_to_binary([Nick, <<"!">>, StateData#state.server]),
-	       StateData#state.host, <<"">>),
-      StateData#state.user,
-      #message{type = chat,
+      #message{from = jid:make(iolist_to_binary([Nick, <<"!">>, StateData#state.server]),
+			       StateData#state.host, <<"">>),
+	       to = StateData#state.user,
+	       type = chat,
 	       body = xmpp:mk_text(
 			iolist_to_binary(
 			  [<<"WHOIS: ">>, Nick, <<" use ">>, Ircserver,
@@ -886,10 +873,10 @@ process_whois319(StateData, String, Nick) ->
     Chanlist = ejabberd_regexp:replace(String,
 				       <<".*319[^:]*:">>, <<"">>),
     ejabberd_router:route(
-      jid:make(iolist_to_binary([Nick, <<"!">>, StateData#state.server]),
-	       StateData#state.host, <<"">>),
-      StateData#state.user,
-      #message{type = chat,
+      #message{from = jid:make(iolist_to_binary([Nick, <<"!">>, StateData#state.server]),
+			       StateData#state.host, <<"">>),
+	       to = StateData#state.user,
+	       type = chat,
 	       body = xmpp:mk_text(
 			iolist_to_binary(
 			  [<<"WHOIS: ">>, Nick, <<" is on ">>, Chanlist]))}).
@@ -905,10 +892,10 @@ process_chanprivmsg(StateData, Chan, From, String) ->
 	   end,
     Msg2 = filter_message(Msg1),
     ejabberd_router:route(
-      jid:make(iolist_to_binary([Chan, <<"%">>, StateData#state.server]),
-	       StateData#state.host, FromUser),
-      StateData#state.user,
-      #message{type = groupchat, body = xmpp:mk_text(Msg2)}).
+      #message{from = jid:make(iolist_to_binary([Chan, <<"%">>, StateData#state.server]),
+			       StateData#state.host, FromUser),
+	       to = StateData#state.user,
+	       type = groupchat, body = xmpp:mk_text(Msg2)}).
 
 process_channotice(StateData, Chan, From, String) ->
     [FromUser | _] = str:tokens(From, <<"!">>),
@@ -921,10 +908,10 @@ process_channotice(StateData, Chan, From, String) ->
 	   end,
     Msg2 = filter_message(Msg1),
     ejabberd_router:route(
-      jid:make(iolist_to_binary([Chan, <<"%">>, StateData#state.server]),
-	       StateData#state.host, FromUser),
-      StateData#state.user,
-      #message{type = groupchat, body = xmpp:mk_text(Msg2)}).
+      #message{from = jid:make(iolist_to_binary([Chan, <<"%">>, StateData#state.server]),
+			       StateData#state.host, FromUser),
+	       to = StateData#state.user,
+	       type = groupchat, body = xmpp:mk_text(Msg2)}).
 
 process_privmsg(StateData, _Nick, From, String) ->
     [FromUser | _] = str:tokens(From, <<"!">>),
@@ -937,10 +924,10 @@ process_privmsg(StateData, _Nick, From, String) ->
 	   end,
     Msg2 = filter_message(Msg1),
     ejabberd_router:route(
-      jid:make(iolist_to_binary([FromUser, <<"!">>, StateData#state.server]),
-	       StateData#state.host, <<"">>),
-      StateData#state.user,
-      #message{type = chat, body = xmpp:mk_text(Msg2)}).
+      #message{from = jid:make(iolist_to_binary([FromUser, <<"!">>, StateData#state.server]),
+			       StateData#state.host, <<"">>),
+	       to = StateData#state.user,
+	       type = chat, body = xmpp:mk_text(Msg2)}).
 
 process_notice(StateData, _Nick, From, String) ->
     [FromUser | _] = str:tokens(From, <<"!">>),
@@ -953,10 +940,10 @@ process_notice(StateData, _Nick, From, String) ->
 	   end,
     Msg2 = filter_message(Msg1),
     ejabberd_router:route(
-      jid:make(iolist_to_binary([FromUser, <<"!">>, StateData#state.server]),
-	       StateData#state.host),
-      StateData#state.user,
-      #message{type = chat, body = xmpp:mk_text(Msg2)}).
+      #message{from = jid:make(iolist_to_binary([FromUser, <<"!">>, StateData#state.server]),
+			       StateData#state.host),
+	       to = StateData#state.user,
+	       type = chat, body = xmpp:mk_text(Msg2)}).
 
 process_version(StateData, _Nick, From) ->
     [FromUser | _] = str:tokens(From, <<"!">>),
@@ -974,7 +961,7 @@ process_userinfo(StateData, _Nick, From) ->
     send_text(StateData,
 	      io_lib:format("NOTICE ~s :\001USERINFO xmpp:~s\001\r\n",
 			    [FromUser,
-			     jid:to_string(StateData#state.user)])).
+			     jid:encode(StateData#state.user)])).
 
 process_topic(StateData, Chan, From, String) ->
     [FromUser | _] = str:tokens(From, <<"!">>),
@@ -982,10 +969,10 @@ process_topic(StateData, Chan, From, String) ->
 				  <<".*TOPIC[^:]*:">>, <<"">>),
     Msg1 = filter_message(Msg),
     ejabberd_router:route(
-      jid:make(iolist_to_binary([Chan, <<"%">>, StateData#state.server]),
-	       StateData#state.host, FromUser),
-      StateData#state.user,
-      #message{type = groupchat,
+      #message{from = jid:make(iolist_to_binary([Chan, <<"%">>, StateData#state.server]),
+			       StateData#state.host, FromUser),
+	       to = StateData#state.user,
+	       type = groupchat,
 	       subject = xmpp:mk_text(Msg1),
 	       body = xmpp:mk_text(<<"/me has changed the subject to: ",
 				     Msg1/binary>>)}).
@@ -996,10 +983,10 @@ process_part(StateData, Chan, From, String) ->
 				  <<".*PART[^:]*:">>, <<"">>),
     Msg1 = filter_message(Msg),
     ejabberd_router:route(
-      jid:make(iolist_to_binary([Chan, <<"%">>, StateData#state.server]),
-	       StateData#state.host, FromUser),
-      StateData#state.user,
-      #presence{type = unavailable,
+      #presence{from = jid:make(iolist_to_binary([Chan, <<"%">>, StateData#state.server]),
+				StateData#state.host, FromUser),
+		to = StateData#state.user,
+		type = unavailable,
 		sub_els = [#muc_user{
 			      items = [#muc_item{affiliation = member,
 						 role = none}]}],
@@ -1023,11 +1010,11 @@ process_quit(StateData, From, String) ->
 	      case (?SETS):is_member(FromUser, Ps) of
 		  true ->
 		      ejabberd_router:route(
-			jid:make(iolist_to_binary([Chan, $%, StateData#state.server]),
-				 StateData#state.host,
-				 FromUser),
-			StateData#state.user,
-			#presence{type = unavailable,
+			#presence{from = jid:make(iolist_to_binary([Chan, $%, StateData#state.server]),
+						  StateData#state.host,
+						  FromUser),
+				  to = StateData#state.user,
+				  type = unavailable,
 				  sub_els = [#muc_user{
 						items = [#muc_item{
 							    affiliation = member,
@@ -1045,10 +1032,10 @@ process_join(StateData, Channel, From, _String) ->
     [FromUser | FromIdent] = str:tokens(From, <<"!">>),
     [Chan | _] = binary:split(Channel, <<":#">>),
     ejabberd_router:route(
-      jid:make(iolist_to_binary([Chan, <<"%">>, StateData#state.server]),
-	       StateData#state.host, FromUser),
-      StateData#state.user,
       #presence{
+	 from = jid:make(iolist_to_binary([Chan, <<"%">>, StateData#state.server]),
+			 StateData#state.host, FromUser),
+	 to = StateData#state.user,
 	 sub_els = [#muc_user{items = [#muc_item{affiliation = member,
 						 role = participant}]}],
 	 status = xmpp:mk_text(list_to_binary(FromIdent))}),
@@ -1063,10 +1050,10 @@ process_join(StateData, Channel, From, _String) ->
 process_mode_o(StateData, Chan, _From, Nick,
 	       Affiliation, Role) ->
     ejabberd_router:route(
-      jid:make(iolist_to_binary([Chan, <<"%">>, StateData#state.server]),
-	       StateData#state.host, Nick),
-      StateData#state.user,
       #presence{
+	 from = jid:make(iolist_to_binary([Chan, <<"%">>, StateData#state.server]),
+			 StateData#state.host, Nick),
+	 to = StateData#state.user,
 	 sub_els = [#muc_user{items = [#muc_item{affiliation = Affiliation,
 						 role = Role}]}]}).
 
@@ -1075,15 +1062,17 @@ process_kick(StateData, Chan, From, Nick, String) ->
     Msg2 = <<Nick/binary, " kicked by ", From/binary, " (",
 	     (filter_message(Msg))/binary, ")">>,
     ejabberd_router:route(
-      jid:make(iolist_to_binary([Chan, <<"%">>, StateData#state.server]),
-	       StateData#state.host),
-      StateData#state.user,
-      #message{type = groupchat, body = xmpp:mk_text(Msg2)}),
+      #message{
+	 from = jid:make(iolist_to_binary([Chan, <<"%">>, StateData#state.server]),
+			 StateData#state.host),
+	 to = StateData#state.user,
+	 type = groupchat, body = xmpp:mk_text(Msg2)}),
     ejabberd_router:route(
-      jid:make(iolist_to_binary([Chan, <<"%">>, StateData#state.server]),
-	       StateData#state.host, Nick),
-      StateData#state.user,
-      #presence{type = unavailable,
+      #presence{
+	 from = jid:make(iolist_to_binary([Chan, <<"%">>, StateData#state.server]),
+			 StateData#state.host, Nick),
+	 to = StateData#state.user,
+	 type = unavailable,
 		sub_els = [#muc_user{items = [#muc_item{
 						 affiliation = none,
 						 role = none}],
@@ -1098,11 +1087,11 @@ process_nick(StateData, From, NewNick) ->
 		  case (?SETS):is_member(FromUser, Ps) of
 		      true ->
 			  ejabberd_router:route(
-			    jid:make(iolist_to_binary([Chan, $%, StateData#state.server]),
-				     StateData#state.host,
-				     FromUser),
-			    StateData#state.user,
 			    #presence{
+			       from = jid:make(iolist_to_binary([Chan, $%, StateData#state.server]),
+					       StateData#state.host,
+					       FromUser),
+			       to = StateData#state.user,
 			       type = unavailable,
 			       sub_els = [#muc_user{
 					     items = [#muc_item{
@@ -1111,10 +1100,10 @@ process_nick(StateData, From, NewNick) ->
 							 nick = Nick}],
 					     status_codes = [303]}]}),
 			  ejabberd_router:route(
-			    jid:make(iolist_to_binary([Chan, $%, StateData#state.server]),
-				     StateData#state.host, Nick),
-			    StateData#state.user,
 			    #presence{
+			       from = jid:make(iolist_to_binary([Chan, $%, StateData#state.server]),
+					       StateData#state.host, Nick),
+			       to = StateData#state.user,
 			       sub_els = [#muc_user{
 					     items = [#muc_item{
 							 affiliation = member,
@@ -1133,13 +1122,13 @@ process_error(StateData, String) ->
     lists:foreach(
       fun(Chan) ->
 	      ejabberd_router:route(
-		jid:make(iolist_to_binary([Chan, $%, StateData#state.server]),
-			 StateData#state.host,
-			 StateData#state.nick),
-		StateData#state.user,
-		xmpp:make_error(
-		  #presence{},
-		  xmpp:err_internal_server_error(String, ?MYLANG)))
+		#presence{
+		   from = jid:make(iolist_to_binary([Chan, $%, StateData#state.server]),
+				   StateData#state.host,
+				   StateData#state.nick),
+		   to = StateData#state.user,
+		   type = error,
+		   sub_els = [xmpp:err_internal_server_error(String, ?MYLANG)]})
       end, dict:fetch_keys(StateData#state.channels)).
 
 error_unknown_num(_StateData, String, Type) ->
@@ -1154,18 +1143,18 @@ remove_element(E, Set) ->
       _ -> Set
     end.
 
-iq_admin(StateData, Channel, From, To,
+iq_admin(StateData, Channel, From, _To,
 	 #iq{type = Type, sub_els = [SubEl]} = IQ) ->
     try process_iq_admin(StateData, Channel, Type, SubEl) of
 	{result, Result} ->
-	    ejabberd_router:route(To, From, xmpp:make_iq_result(IQ, Result));
+	    ejabberd_router:route(xmpp:make_iq_result(IQ, Result));
 	{error, Error} ->
-	    ejabberd_router:route_error(To, From, IQ, Error)
+	    ejabberd_router:route_error(IQ, Error)
     catch E:R ->
 	    ?ERROR_MSG("failed to process admin query from ~s: ~p",
-		       [jid:to_string(From), {E, {R, erlang:get_stacktrace()}}]),
+		       [jid:encode(From), {E, {R, erlang:get_stacktrace()}}]),
 	    ejabberd_router:route_error(
-	      To, From, IQ, xmpp:err_internal_server_error())
+	      IQ, xmpp:err_internal_server_error())
     end.
 
 process_iq_admin(_StateData, _Channel, set, #muc_admin{items = []}) ->

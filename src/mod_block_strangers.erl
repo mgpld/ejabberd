@@ -29,7 +29,7 @@
 -behaviour(gen_mod).
 
 %% API
--export([start/2, stop/1,
+-export([start/2, stop/1, reload/3,
          depends/2, mod_opt_type/1]).
 
 -export([filter_packet/1]).
@@ -50,17 +50,26 @@ stop(Host) ->
                           ?MODULE, filter_packet, 25),
     ok.
 
+reload(_Host, _NewOpts, _OldOpts) ->
+    ok.
+
 filter_packet({#message{} = Msg, State} = Acc) ->
     From = xmpp:get_from(Msg),
     LFrom = jid:tolower(From),
     LBFrom = jid:remove_resource(LFrom),
-    #{pres_a := PresA} = State,
+    #{pres_a := PresA,
+      pres_t := PresT,
+      pres_f := PresF} = State,
     case (Msg#message.body == [] andalso
           Msg#message.subject == [])
         orelse ejabberd_router:is_my_route(From#jid.lserver)
         orelse (?SETS):is_element(LFrom, PresA)
-	orelse (?SETS):is_element(LBFrom, PresA)
-        orelse sets_bare_member(LBFrom, PresA) of
+        orelse (?SETS):is_element(LBFrom, PresA)
+        orelse sets_bare_member(LBFrom, PresA)
+        orelse (?SETS):is_element(LFrom, PresT)
+        orelse (?SETS):is_element(LBFrom, PresT)
+        orelse (?SETS):is_element(LFrom, PresF)
+        orelse (?SETS):is_element(LBFrom, PresF) of
 	true ->
 	    Acc;
 	false ->

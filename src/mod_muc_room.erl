@@ -30,14 +30,14 @@
 -behaviour(gen_fsm).
 
 %% External exports
--export([start_link/9,
-	 start_link/7,
-	 start/9,
-	 start/7,
+-export([start_link/10,
+	 start_link/8,
+	 start/10,
+	 start/8,
 	 get_role/2,
 	 get_affiliation/2,
 	 is_occupant_or_admin/2,
-	 route/4]).
+	 route/2]).
 
 %% gen_fsm callbacks
 -export([init/1,
@@ -93,25 +93,25 @@
 %%% API
 %%%----------------------------------------------------------------------
 start(Host, ServerHost, Access, Room, HistorySize, RoomShaper,
-      Creator, Nick, DefRoomOpts) ->
+      Creator, Nick, DefRoomOpts, QueueType) ->
     gen_fsm:start(?MODULE, [Host, ServerHost, Access, Room, HistorySize,
-			    RoomShaper, Creator, Nick, DefRoomOpts],
+			    RoomShaper, Creator, Nick, DefRoomOpts, QueueType],
 		    ?FSMOPTS).
 
-start(Host, ServerHost, Access, Room, HistorySize, RoomShaper, Opts) ->
+start(Host, ServerHost, Access, Room, HistorySize, RoomShaper, Opts, QueueType) ->
     gen_fsm:start(?MODULE, [Host, ServerHost, Access, Room, HistorySize,
-			    RoomShaper, Opts],
+			    RoomShaper, Opts, QueueType],
 		    ?FSMOPTS).
 
 start_link(Host, ServerHost, Access, Room, HistorySize, RoomShaper,
-	   Creator, Nick, DefRoomOpts) ->
+	   Creator, Nick, DefRoomOpts, QueueType) ->
     gen_fsm:start_link(?MODULE, [Host, ServerHost, Access, Room, HistorySize,
-				 RoomShaper, Creator, Nick, DefRoomOpts],
+				 RoomShaper, Creator, Nick, DefRoomOpts, QueueType],
 		       ?FSMOPTS).
 
-start_link(Host, ServerHost, Access, Room, HistorySize, RoomShaper, Opts) ->
+start_link(Host, ServerHost, Access, Room, HistorySize, RoomShaper, Opts, QueueType) ->
     gen_fsm:start_link(?MODULE, [Host, ServerHost, Access, Room, HistorySize,
-				 RoomShaper, Opts],
+				 RoomShaper, Opts, QueueType],
 		       ?FSMOPTS).
 
 %%%----------------------------------------------------------------------
@@ -119,38 +119,43 @@ start_link(Host, ServerHost, Access, Room, HistorySize, RoomShaper, Opts) ->
 %%%----------------------------------------------------------------------
 
 init([Host, ServerHost, Access, Room, HistorySize,
-      RoomShaper, Creator, _Nick, DefRoomOpts]) ->
+      RoomShaper, Creator, _Nick, DefRoomOpts, QueueType]) ->
     process_flag(trap_exit, true),
     Shaper = shaper:new(RoomShaper),
+    RoomQueue = room_queue_new(ServerHost, Shaper, QueueType),
     State = set_affiliation(Creator, owner,
 	    #state{host = Host, server_host = ServerHost,
 		   access = Access, room = Room,
-		   history = lqueue_new(HistorySize),
-		   jid = jid:make(Room, Host, <<"">>),
+		   history = lqueue_new(HistorySize, QueueType),
+		   jid = jid:make(Room, Host),
 		   just_created = true,
+		   room_queue = RoomQueue,
 		   room_shaper = Shaper}),
     State1 = set_opts(DefRoomOpts, State),
     store_room(State1),
     ?INFO_MSG("Created MUC room ~s@~s by ~s",
-	      [Room, Host, jid:to_string(Creator)]),
+	      [Room, Host, jid:encode(Creator)]),
     add_to_log(room_existence, created, State1),
     add_to_log(room_existence, started, State1),
     {ok, normal_state, State1};
-init([Host, ServerHost, Access, Room, HistorySize, RoomShaper, Opts]) ->
+init([Host, ServerHost, Access, Room, HistorySize, RoomShaper, Opts, QueueType]) ->
     process_flag(trap_exit, true),
     Shaper = shaper:new(RoomShaper),
+    RoomQueue = room_queue_new(ServerHost, Shaper, QueueType),
     State = set_opts(Opts, #state{host = Host,
 				  server_host = ServerHost,
 				  access = Access,
 				  room = Room,
-				  history = lqueue_new(HistorySize),
-				  jid = jid:make(Room, Host, <<"">>),
+				  history = lqueue_new(HistorySize, QueueType),
+				  jid = jid:make(Room, Host),
+				  room_queue = RoomQueue,
 				  room_shaper = Shaper}),
     add_to_log(room_existence, started, State),
     {ok, normal_state, State}.
 
-normal_state({route, From, <<"">>,
-	      #message{type = Type, lang = Lang} = Packet}, StateData) ->
+normal_state({route, <<"">>,
+	      #message{from = From, type = Type, lang = Lang} = Packet},
+	     StateData) ->
     case is_user_online(From, StateData) orelse
 	is_subscriber(From, StateData) orelse
 	is_user_allowed_message_nonparticipant(From, StateData) of
@@ -168,13 +173,16 @@ normal_state({route, From, <<"">>,
 	    if Activity#activity.message /= undefined ->
 		    ErrText = <<"Traffic rate limit is exceeded">>,
 		    Err = xmpp:err_resource_constraint(ErrText, Lang),
-		    ejabberd_router:route_error(StateData#state.jid, From, Packet, Err),
+		    ejabberd_router:route_error(Packet, Err),
 		    {next_state, normal_state, StateData};
 	       Now >= Activity#activity.message_time + MinMessageInterval,
 	       MessageShaperInterval == 0 ->
 		    {RoomShaper, RoomShaperInterval} =
 			shaper:update(StateData#state.room_shaper, Size),
-		    RoomQueueEmpty = queue:is_empty(StateData#state.room_queue),
+		    RoomQueueEmpty = case StateData#state.room_queue of
+					 undefined -> true;
+					 RQ -> p1_queue:is_empty(RQ)
+				     end,
 		    if RoomShaperInterval == 0, RoomQueueEmpty ->
 			    NewActivity = Activity#activity{
 					    message_time = Now,
@@ -184,7 +192,7 @@ normal_state({route, From, <<"">>,
 							     StateData),
 			    StateData2 = StateData1#state{room_shaper =
 							      RoomShaper},
-			    process_groupchat_message(From, Packet,
+			    process_groupchat_message(Packet,
 						      StateData2);
 		       true ->
 			    StateData1 = if RoomQueueEmpty ->
@@ -199,8 +207,8 @@ normal_state({route, From, <<"">>,
 					    message_time = Now,
 					    message_shaper = MessageShaper,
 					    message = Packet},
-			    RoomQueue = queue:in({message, From},
-						 StateData#state.room_queue),
+			    RoomQueue = p1_queue:in({message, From},
+						    StateData#state.room_queue),
 			    StateData2 = store_user_activity(From,
 							     NewActivity,
 							     StateData1),
@@ -237,7 +245,7 @@ normal_state({route, From, <<"">>,
 	    ErrText = <<"It is not allowed to send private messages "
 			"to the conference">>,
 	    Err = xmpp:err_not_acceptable(ErrText, Lang),
-	    ejabberd_router:route_error(StateData#state.jid, From, Packet, Err),
+	    ejabberd_router:route_error(Packet, Err),
 	    {next_state, normal_state, StateData};
 	true when Type == normal ->
 	    {next_state, normal_state,
@@ -246,14 +254,13 @@ normal_state({route, From, <<"">>,
 	     catch _:{xmpp_codec, Why} ->
 		     Txt = xmpp:format_error(Why),
 		     Err = xmpp:err_bad_request(Txt, Lang),
-		     ejabberd_router:route_error(
-		       StateData#state.jid, From, Packet, Err),
+		     ejabberd_router:route_error(Packet, Err),
 		     StateData
 	     end};
 	true ->
 	    ErrText = <<"Improper message type">>,
 	    Err = xmpp:err_not_acceptable(ErrText, Lang),
-	    ejabberd_router:route_error(StateData#state.jid, From, Packet, Err),
+	    ejabberd_router:route_error(Packet, Err),
 	    {next_state, normal_state, StateData};
 	false when Type /= error ->
 	    handle_roommessage_from_nonparticipant(Packet, StateData, From),
@@ -261,8 +268,8 @@ normal_state({route, From, <<"">>,
 	false ->
 	    {next_state, normal_state, StateData}
     end;
-normal_state({route, From, <<"">>,
-	      #iq{type = Type, lang = Lang, sub_els = [_]} = IQ0},
+normal_state({route, <<"">>,
+	      #iq{from = From, type = Type, lang = Lang, sub_els = [_]} = IQ0},
 	     StateData) when Type == get; Type == set ->
     try
 	case ejabberd_hooks:run_fold(
@@ -274,7 +281,7 @@ normal_state({route, From, <<"">>,
 	    ignore ->
 		{next_state, normal_state, StateData};
 	    #iq{type = T} = IQRes when T == error; T == result ->
-		ejabberd_router:route(StateData#state.jid, From, IQRes),
+		ejabberd_router:route(IQRes),
 		{next_state, normal_state, StateData};
 	    #iq{sub_els = [SubEl]} = IQ ->
 		Res1 = case xmpp:get_ns(SubEl) of
@@ -305,13 +312,11 @@ normal_state({route, From, <<"">>,
 			    {xmpp:make_iq_result(IQ, Res), StateData};
 			{ignore, SD} ->
 			    {ignore, SD};
-			{error, Error, ResStateData} ->
-			    {xmpp:make_error(IQ0, Error), ResStateData};
 			{error, Error} ->
 			    {xmpp:make_error(IQ0, Error), StateData}
 		    end,
 		if IQRes /= ignore ->
-			ejabberd_router:route(StateData#state.jid, From, IQRes);
+			ejabberd_router:route(IQRes);
 		   true ->
 			ok
 		end,
@@ -327,16 +332,16 @@ normal_state({route, From, <<"">>,
     catch _:{xmpp_codec, Why} ->
 	    ErrTxt = xmpp:format_error(Why),
 	    Err = xmpp:err_bad_request(ErrTxt, Lang),
-	    ejabberd_router:route_error(StateData#state.jid, From, IQ0, Err)
+	    ejabberd_router:route_error(IQ0, Err)
     end;
-normal_state({route, From, <<"">>, #iq{} = IQ}, StateData) ->
+normal_state({route, <<"">>, #iq{} = IQ}, StateData) ->
     Err = xmpp:err_bad_request(),
-    ejabberd_router:route_error(StateData#state.jid, From, IQ, Err),
+    ejabberd_router:route_error(IQ, Err),
     case StateData#state.just_created of
 	true -> {stop, normal, StateData};
 	false -> {next_state, normal_state, StateData}
     end;
-normal_state({route, From, Nick, #presence{} = Packet}, StateData) ->
+normal_state({route, Nick, #presence{from = From} = Packet}, StateData) ->
     Activity = get_user_activity(From, StateData),
     Now = p1_time_compat:system_time(micro_seconds),
     MinPresenceInterval =
@@ -351,7 +356,7 @@ normal_state({route, From, Nick, #presence{} = Packet}, StateData) ->
 	    NewActivity = Activity#activity{presence_time = Now},
 	    StateData1 = store_user_activity(From, NewActivity,
 					     StateData),
-	    process_presence(From, Nick, Packet, StateData1);
+	    process_presence(Nick, Packet, StateData1);
        true ->
 	    if Activity#activity.presence == undefined ->
 		    Interval = (Activity#activity.presence_time +
@@ -365,8 +370,8 @@ normal_state({route, From, Nick, #presence{} = Packet}, StateData) ->
 					     StateData),
 	    {next_state, normal_state, StateData1}
     end;
-normal_state({route, From, ToNick,
-	      #message{type = Type, lang = Lang} = Packet},
+normal_state({route, ToNick,
+	      #message{from = From, type = Type, lang = Lang} = Packet},
 	     StateData) ->
     case decide_fate_message(Packet, From, StateData) of
 	{expulse_sender, Reason} ->
@@ -387,17 +392,13 @@ normal_state({route, From, ToNick,
 		    ErrText = <<"It is not allowed to send private messages "
 				"of type \"groupchat\"">>,
 		    Err = xmpp:err_bad_request(ErrText, Lang),
-		    ejabberd_router:route_error(
-		      jid:replace_resource(StateData#state.jid, ToNick),
-		      From, Packet, Err);
+		    ejabberd_router:route_error(Packet, Err);
 		{true, true} ->
 		    case find_jids_by_nick(ToNick, StateData) of
 			[] ->
 			    ErrText = <<"Recipient is not in the conference room">>,
 			    Err = xmpp:err_item_not_found(ErrText, Lang),
-			    ejabberd_router:route_error(
-			      jid:replace_resource(StateData#state.jid, ToNick),
-			      From, Packet, Err);
+			    ejabberd_router:route_error(Packet, Err);
 			ToJIDs ->
 			    SrcIsVisitor = is_visitor(From, StateData),
 			    DstIsModerator = is_moderator(hd(ToJIDs), StateData),
@@ -412,35 +413,31 @@ normal_state({route, From, ToNick,
 					jid:replace_resource(StateData#state.jid,
 							     FromNick),
 				    X = #muc_user{},
-				    PrivMsg = xmpp:set_subtag(Packet, X),
-				    [ejabberd_router:route(FromNickJID, ToJID, PrivMsg)
+				    PrivMsg = xmpp:set_from(
+						xmpp:set_subtag(Packet, X),
+						FromNickJID),
+				    [ejabberd_router:route(xmpp:set_to(PrivMsg, ToJID))
 				     || ToJID <- ToJIDs];
 			       true ->
 				    ErrText = <<"It is not allowed to send private messages">>,
 				    Err = xmpp:err_forbidden(ErrText, Lang),
-				    ejabberd_router:route_error(
-				      jid:replace_resource(StateData#state.jid, ToNick),
-				      From, Packet, Err)
+				    ejabberd_router:route_error(Packet, Err)
 			    end
 		    end;
 		{true, false} ->
 		    ErrText = <<"Only occupants are allowed to send messages "
 				"to the conference">>,
 		    Err = xmpp:err_not_acceptable(ErrText, Lang),
-		    ejabberd_router:route_error(
-		      jid:replace_resource(StateData#state.jid, ToNick),
-		      From, Packet, Err);
+		    ejabberd_router:route_error(Packet, Err);
 		{false, _} ->
 		    ErrText = <<"It is not allowed to send private messages">>,
 		    Err = xmpp:err_forbidden(ErrText, Lang),
-		    ejabberd_router:route_error(
-		      jid:replace_resource(StateData#state.jid, ToNick),
-		      From, Packet, Err)
+		    ejabberd_router:route_error(Packet, Err)
 	    end,
 	  {next_state, normal_state, StateData}
     end;
-normal_state({route, From, ToNick,
-	      #iq{id = StanzaId, lang = Lang} = Packet},
+normal_state({route, ToNick,
+	      #iq{from = From, id = StanzaId, lang = Lang} = Packet},
 	     StateData) ->
     case {(StateData#state.config)#config.allow_query_users,
 	  is_user_online_iq(StanzaId, From, StateData)} of
@@ -449,31 +446,27 @@ normal_state({route, From, ToNick,
 		false ->
 		    ErrText = <<"Recipient is not in the conference room">>,
 		    Err = xmpp:err_item_not_found(ErrText, Lang),
-		    ejabberd_router:route_error(
-		      jid:replace_resource(StateData#state.jid, ToNick),
-		      From, Packet, Err);
+		    ejabberd_router:route_error(Packet, Err);
 		ToJID ->
 		    {ok, #user{nick = FromNick}} =
 			(?DICT):find(jid:tolower(FromFull), StateData#state.users),
 		    {ToJID2, Packet2} = handle_iq_vcard(ToJID, NewId, Packet),
 		    ejabberd_router:route(
-		      jid:replace_resource(StateData#state.jid, FromNick),
-		      ToJID2, Packet2)
+		      xmpp:set_from_to(
+			Packet2,
+			jid:replace_resource(StateData#state.jid, FromNick),
+			ToJID2))
 	    end;
 	{_, {false, _, _}} ->
 	    ErrText = <<"Only occupants are allowed to send queries "
 			"to the conference">>,
 	    Err = xmpp:err_not_acceptable(ErrText, Lang),
-	    ejabberd_router:route_error(
-	      jid:replace_resource(StateData#state.jid, ToNick),
-	      From, Packet, Err);
+	    ejabberd_router:route_error(Packet, Err);
 	_ ->
 	    ErrText = <<"Queries to the conference members are "
 			"not allowed in this room">>,
 	    Err = xmpp:err_not_allowed(ErrText, Lang),
-	    ejabberd_router:route_error(
-	      jid:replace_resource(StateData#state.jid, ToNick),
-	      From, Packet, Err)
+	    ejabberd_router:route_error(Packet, Err)
     end,
     {next_state, normal_state, StateData};
 normal_state(_Event, StateData) ->
@@ -497,12 +490,12 @@ handle_event({destroy, Reason}, _StateName,
 	destroy_room(#muc_destroy{xmlns = ?NS_MUC_OWNER, reason = Reason},
 		     StateData),
     ?INFO_MSG("Destroyed MUC room ~s with reason: ~p",
-	      [jid:to_string(StateData#state.jid), Reason]),
+	      [jid:encode(StateData#state.jid), Reason]),
     add_to_log(room_existence, destroyed, StateData),
     {stop, shutdown, StateData};
 handle_event(destroy, StateName, StateData) ->
     ?INFO_MSG("Destroyed MUC room ~s",
-	      [jid:to_string(StateData#state.jid)]),
+	      [jid:encode(StateData#state.jid)]),
     handle_event({destroy, undefined}, StateName, StateData);
 handle_event({set_affiliations, Affiliations},
 	     StateName, StateData) ->
@@ -571,13 +564,7 @@ handle_sync_event({muc_subscribe, From, Nick, Nodes}, _From,
 	    NewConfig = (NewState#state.config)#config{
 			  captcha_protected = CaptchaRequired,
 			  password_protected = PasswordProtected},
-	    {reply, {error, <<"Requrest is ignored">>},
-	     NewState#state{config = NewConfig}};
-	{error, Err, NewState} ->
-	    NewConfig = (NewState#state.config)#config{
-			  captcha_protected = CaptchaRequired,
-			  password_protected = PasswordProtected},
-	    {reply, {error, get_error_text(Err)}, StateName,
+	    {reply, {error, <<"Request is ignored">>},
 	     NewState#state{config = NewConfig}};
 	{error, Err} ->
 	    {reply, {error, get_error_text(Err)}, StateName, StateData}
@@ -589,9 +576,7 @@ handle_sync_event({muc_unsubscribe, From}, _From, StateName, StateData) ->
 	{result, _, NewState} ->
 	    {reply, ok, StateName, NewState};
 	{ignore, NewState} ->
-	    {reply, {error, <<"Requrest is ignored">>}, NewState};
-	{error, Err, NewState} ->
-	    {reply, {error, get_error_text(Err)}, StateName, NewState};
+	    {reply, {error, <<"Request is ignored">>}, NewState};
 	{error, Err} ->
 	    {reply, {error, get_error_text(Err)}, StateName, StateData}
     end;
@@ -606,8 +591,8 @@ code_change(_OldVsn, StateName, StateData, _Extra) ->
     {ok, StateName, StateData}.
 
 handle_info({process_user_presence, From}, normal_state = _StateName, StateData) ->
-    RoomQueueEmpty = queue:is_empty(StateData#state.room_queue),
-    RoomQueue = queue:in({presence, From}, StateData#state.room_queue),
+    RoomQueueEmpty = p1_queue:is_empty(StateData#state.room_queue),
+    RoomQueue = p1_queue:in({presence, From}, StateData#state.room_queue),
     StateData1 = StateData#state{room_queue = RoomQueue},
     if RoomQueueEmpty ->
 	   StateData2 = prepare_room_queue(StateData1),
@@ -617,9 +602,9 @@ handle_info({process_user_presence, From}, normal_state = _StateName, StateData)
 handle_info({process_user_message, From},
 	    normal_state = _StateName, StateData) ->
     RoomQueueEmpty =
-	queue:is_empty(StateData#state.room_queue),
-    RoomQueue = queue:in({message, From},
-			 StateData#state.room_queue),
+	p1_queue:is_empty(StateData#state.room_queue),
+    RoomQueue = p1_queue:in({message, From},
+			    StateData#state.room_queue),
     StateData1 = StateData#state{room_queue = RoomQueue},
     if RoomQueueEmpty ->
 	   StateData2 = prepare_room_queue(StateData1),
@@ -628,7 +613,7 @@ handle_info({process_user_message, From},
     end;
 handle_info(process_room_queue,
 	    normal_state = StateName, StateData) ->
-    case queue:out(StateData#state.room_queue) of
+    case p1_queue:out(StateData#state.room_queue) of
       {{value, {message, From}}, RoomQueue} ->
 	  Activity = get_user_activity(From, StateData),
 	  Packet = Activity#activity.message,
@@ -637,7 +622,7 @@ handle_info(process_room_queue,
 					   StateData),
 	  StateData2 = StateData1#state{room_queue = RoomQueue},
 	  StateData3 = prepare_room_queue(StateData2),
-	  process_groupchat_message(From, Packet, StateData3);
+	  process_groupchat_message(Packet, StateData3);
       {{value, {presence, From}}, RoomQueue} ->
 	  Activity = get_user_activity(From, StateData),
 	  {Nick, Packet} = Activity#activity.presence,
@@ -646,7 +631,7 @@ handle_info(process_room_queue,
 					   StateData),
 	  StateData2 = StateData1#state{room_queue = RoomQueue},
 	  StateData3 = prepare_room_queue(StateData2),
-	  process_presence(From, Nick, Packet, StateData3);
+	  process_presence(Nick, Packet, StateData3);
       {empty, _} -> {next_state, StateName, StateData}
     end;
 handle_info({captcha_succeed, From}, normal_state,
@@ -667,14 +652,12 @@ handle_info({captcha_failed, From}, normal_state,
     NewState = case (?DICT):find(From,
 				 StateData#state.robots)
 		   of
-		 {ok, {Nick, Packet}} ->
+		 {ok, {_Nick, Packet}} ->
 		     Robots = (?DICT):erase(From, StateData#state.robots),
 		     Txt = <<"The CAPTCHA verification has failed">>,
 		     Lang = xmpp:get_lang(Packet),
 		     Err = xmpp:err_not_authorized(Txt, Lang),
-		     ejabberd_router:route_error(
-		       jid:replace_resource(StateData#state.jid, Nick),
-		       From, Packet, Err),
+		     ejabberd_router:route_error(Packet, Err),
 		     StateData#state{robots = Robots};
 		 _ -> StateData
 	       end,
@@ -721,12 +704,13 @@ terminate(Reason, _StateName, StateData) ->
 %%%----------------------------------------------------------------------
 %%% Internal functions
 %%%----------------------------------------------------------------------
--spec route(pid(), jid(), binary(), stanza()) -> ok.
-route(Pid, From, ToNick, Packet) ->
-    gen_fsm:send_event(Pid, {route, From, ToNick, Packet}).
+-spec route(pid(), stanza()) -> ok.
+route(Pid, Packet) ->
+    #jid{lresource = Nick} = xmpp:get_to(Packet),
+    gen_fsm:send_event(Pid, {route, Nick, Packet}).
 
--spec process_groupchat_message(jid(), message(), state()) -> fsm_next().
-process_groupchat_message(From, #message{lang = Lang} = Packet, StateData) ->
+-spec process_groupchat_message(message(), state()) -> fsm_next().
+process_groupchat_message(#message{from = From, lang = Lang} = Packet, StateData) ->
     IsSubscriber = is_subscriber(From, StateData),
     case is_user_online(From, StateData) orelse IsSubscriber orelse
 	   is_user_allowed_message_nonparticipant(From, StateData)
@@ -763,9 +747,7 @@ process_groupchat_message(From, #message{lang = Lang} = Packet, StateData) ->
 			 ejabberd_hooks:run_fold(muc_filter_message,
 						 StateData#state.server_host,
 						 Packet,
-						 [StateData,
-						  StateData#state.jid,
-						  From, FromNick])
+						 [StateData, FromNick])
 			   of
 			 drop ->
 			     {next_state, normal_state, StateData};
@@ -800,23 +782,21 @@ process_groupchat_message(From, #message{lang = Lang} = Packet, StateData) ->
 				     <<"Only moderators are allowed to change "
 				       "the subject in this room">>, Lang)
 			     end,
-		       ejabberd_router:route_error(
-			 StateData#state.jid, From, Packet, Err),
+		       ejabberd_router:route_error(Packet, Err),
 		       {next_state, normal_state, StateData}
 		 end;
 	     true ->
 		 ErrText = <<"Visitors are not allowed to send messages "
 			     "to all occupants">>,
 		 Err = xmpp:err_forbidden(ErrText, Lang),
-		 ejabberd_router:route_error(
-		   StateData#state.jid, From, Packet, Err),
+		 ejabberd_router:route_error(Packet, Err),
 		 {next_state, normal_state, StateData}
 	  end;
       false ->
 	  ErrText = <<"Only occupants are allowed to send messages "
 		      "to the conference">>,
 	  Err = xmpp:err_not_acceptable(ErrText, Lang),
-	  ejabberd_router:route_error(StateData#state.jid, From, Packet, Err),
+	  ejabberd_router:route_error(Packet, Err),
 	  {next_state, normal_state, StateData}
     end.
 
@@ -854,7 +834,7 @@ process_normal_message(From, #message{lang = Lang} = Pkt, StateData) ->
 	{ok, VoiceApproval} ->
 	    process_voice_approval(From, Pkt, VoiceApproval, StateData);
 	{error, Err} ->
-	    ejabberd_router:route_error(StateData#state.jid, From, Pkt, Err),
+	    ejabberd_router:route_error(Pkt, Err),
 	    StateData;
 	ok ->
 	    StateData
@@ -902,15 +882,13 @@ process_voice_request(From, Pkt, StateData) ->
 		    ErrText = <<"Please, wait for a while before sending "
 				"new voice request">>,
 		    Err = xmpp:err_resource_constraint(ErrText, Lang),
-		    ejabberd_router:route_error(
-		      StateData#state.jid, From, Pkt, Err),
+		    ejabberd_router:route_error(Pkt, Err),
 		    StateData#state{last_voice_request_time = Times}
 	    end;
 	false ->
 	    ErrText = <<"Voice requests are disabled in this conference">>,
 	    Err = xmpp:err_forbidden(ErrText, Lang),
-	    ejabberd_router:route_error(
-	      StateData#state.jid, From, Pkt, Err),
+	    ejabberd_router:route_error(Pkt, Err),
 	    StateData
     end.
 
@@ -936,15 +914,13 @@ process_voice_approval(From, Pkt, VoiceApproval, StateData) ->
 		    ErrText = <<"Failed to extract JID from your voice "
 				"request approval">>,
 		    Err = xmpp:err_bad_request(ErrText, Lang),
-		    ejabberd_router:route_error(
-		      StateData#state.jid, From, Pkt, Err),
+		    ejabberd_router:route_error(Pkt, Err),
 		    StateData
 	    end;
 	false ->
 	    ErrText = <<"Only moderators can approve voice requests">>,
 	    Err = xmpp:err_not_allowed(ErrText, Lang),
-	    ejabberd_router:route_error(
-	      StateData#state.jid, From, Pkt, Err),
+	    ejabberd_router:route_error(Pkt, Err),
 	    StateData
     end.
 
@@ -982,30 +958,27 @@ get_participant_data(From, StateData) ->
 	    end
     end.
 
--spec process_presence(jid(), binary(), presence(), state()) -> fsm_transition().
-process_presence(From, Nick, #presence{type = Type0} = Packet0, StateData) ->
+-spec process_presence(binary(), presence(), state()) -> fsm_transition().
+process_presence(Nick, #presence{from = From, type = Type0} = Packet0, StateData) ->
     IsOnline = is_user_online(From, StateData),
     if Type0 == available;
        IsOnline and ((Type0 == unavailable) or (Type0 == error)) ->
 	   case ejabberd_hooks:run_fold(muc_filter_presence,
 					StateData#state.server_host,
 					Packet0,
-					[StateData,
-					 StateData#state.jid,
-					 From, Nick]) of
+					[StateData, Nick]) of
 	     drop ->
 		 {next_state, normal_state, StateData};
 	     #presence{} = Packet ->
 		 close_room_if_temporary_and_empty(
-		   do_process_presence(From, Nick, Packet, StateData))
+		   do_process_presence(Nick, Packet, StateData))
 	   end;
        true ->
 	    {next_state, normal_state, StateData}
     end.
 
--spec do_process_presence(jid(), binary(), presence(), state()) ->
-				 state().
-do_process_presence(From, Nick, #presence{type = available, lang = Lang} = Packet,
+-spec do_process_presence(binary(), presence(), state()) -> state().
+do_process_presence(Nick, #presence{from = From, type = available, lang = Lang} = Packet,
 		    StateData) ->
     case is_user_online(From, StateData) of
 	false ->
@@ -1023,25 +996,19 @@ do_process_presence(From, Nick, #presence{type = available, lang = Lang} = Packe
 			    ErrText = <<"Visitors are not allowed to change their "
 					"nicknames in this room">>,
 			    Err = xmpp:err_not_allowed(ErrText, Lang),
-			    ejabberd_router:route_error(
-			      jid:replace_resource(StateData#state.jid, Nick),
-			      From, Packet, Err),
+			    ejabberd_router:route_error(Packet, Err),
 			    StateData;
 			{true, _, _} ->
 			    ErrText = <<"That nickname is already in use by another "
 					"occupant">>,
 			    Err = xmpp:err_conflict(ErrText, Lang),
-			    ejabberd_router:route_error(
-			      jid:replace_resource(StateData#state.jid, Nick),
-			      From, Packet, Err),
+			    ejabberd_router:route_error(Packet, Err),
 			    StateData;
 			{_, false, _} ->
 			    ErrText = <<"That nickname is registered by another "
 					"person">>,
 			    Err = xmpp:err_conflict(ErrText, Lang),
-			    ejabberd_router:route_error(
-			      jid:replace_resource(StateData#state.jid, Nick),
-			      From, Packet, Err),
+			    ejabberd_router:route_error(Packet, Err),
 			    StateData;
 			_ ->
 				    change_nick(From, Nick, StateData)
@@ -1055,7 +1022,7 @@ do_process_presence(From, Nick, #presence{type = available, lang = Lang} = Packe
 		    NewState
 	    end
     end;
-do_process_presence(From, Nick, #presence{type = unavailable} = Packet,
+do_process_presence(Nick, #presence{from = From, type = unavailable} = Packet,
 		    StateData) ->
     NewPacket = case {(StateData#state.config)#config.allow_visitor_status,
 		      is_visitor(From, StateData)} of
@@ -1070,7 +1037,7 @@ do_process_presence(From, Nick, #presence{type = unavailable} = Packet,
     end,
     Reason = xmpp:get_text(NewPacket#presence.status),
     remove_online_user(From, NewState, Reason);
-do_process_presence(From, _Nick, #presence{type = error, lang = Lang} = Packet,
+do_process_presence(_Nick, #presence{from = From, type = error, lang = Lang} = Packet,
 		    StateData) ->
     ErrorText = <<"It is not allowed to send error messages to the"
 		  " room. The participant (~s) has sent an error "
@@ -1096,12 +1063,13 @@ close_room_if_temporary_and_empty(StateData1) ->
       true ->
 	  ?INFO_MSG("Destroyed MUC room ~s because it's temporary "
 		    "and empty",
-		    [jid:to_string(StateData1#state.jid)]),
+		    [jid:encode(StateData1#state.jid)]),
 	  add_to_log(room_existence, destroyed, StateData1),
 	  {stop, normal, StateData1};
       _ -> {next_state, normal_state, StateData1}
     end.
 
+-spec get_users_and_subscribers(state()) -> ?TDICT.
 get_users_and_subscribers(StateData) ->
     OnlineSubscribers = ?DICT:fold(
 			   fun(LJID, _, Acc) ->
@@ -1217,7 +1185,7 @@ decide_fate_message(#message{type = error} = Msg,
 	   true ->
 	       Reason = str:format("This participant is considered a ghost "
 				   "and is expulsed: ~s",
-				   [jid:to_string(From)]),
+				   [jid:encode(From)]),
 	       {expulse_sender, Reason};
 	   false -> continue_delivery
 	 end,
@@ -1261,8 +1229,9 @@ get_error_condition(#stanza_error{reason = Reason}) ->
 get_error_condition(undefined) ->
     "undefined".
 
-get_error_text(Error) ->
-    (Error#stanza_error.text)#text.data.
+-spec get_error_text(stanza_error()) -> binary().
+get_error_text(#stanza_error{text = Txt}) ->
+    xmpp:get_text([Txt]).
 
 -spec make_reason(stanza(), jid(), state(), binary()) -> binary().
 make_reason(Packet, From, StateData, Reason1) ->
@@ -1456,6 +1425,32 @@ get_max_users_admin_threshold(StateData) ->
                            fun(I) when is_integer(I), I>0 -> I end,
                            5).
 
+-spec room_queue_new(binary(), shaper:shaper(), _) -> p1_queue:queue().
+room_queue_new(ServerHost, Shaper, QueueType) ->
+    HaveRoomShaper = Shaper /= none,
+    HaveMessageShaper = gen_mod:get_module_opt(
+			  ServerHost, mod_muc, user_message_shaper,
+			  fun(A) when is_atom(A) -> A end,
+			  none) /= none,
+    HavePresenceShaper = gen_mod:get_module_opt(
+			   ServerHost, mod_muc, user_presence_shaper,
+			   fun(A) when is_atom(A) -> A end,
+			   none) /= none,
+    HaveMinMessageInterval = gen_mod:get_module_opt(
+			       ServerHost, mod_muc, min_message_interval,
+			       fun(I) when is_number(I), I>=0 -> I end,
+			       0) /= 0,
+    HaveMinPresenceInterval = gen_mod:get_module_opt(
+				ServerHost, mod_muc, min_presence_interval,
+				fun(I) when is_number(I), I>=0 -> I end,
+				0) /= 0,
+    if HaveRoomShaper or HaveMessageShaper or HavePresenceShaper
+       or HaveMinMessageInterval or HaveMinPresenceInterval ->
+	    p1_queue:new(QueueType);
+       true ->
+	    undefined
+    end.
+
 -spec get_user_activity(jid(), state()) -> #activity{}.
 get_user_activity(JID, StateData) ->
     case treap:lookup(jid:tolower(JID),
@@ -1539,7 +1534,7 @@ store_user_activity(JID, UserActivity, StateData) ->
 		 end,
     StateData1.
 
--spec clean_treap(treap:treap(), integer()) -> treap:treap().
+-spec clean_treap(treap:treap(), integer() | {1, integer()}) -> treap:treap().
 clean_treap(Treap, CleanPriority) ->
     case treap:is_empty(Treap) of
       true -> Treap;
@@ -1553,7 +1548,7 @@ clean_treap(Treap, CleanPriority) ->
 
 -spec prepare_room_queue(state()) -> state().
 prepare_room_queue(StateData) ->
-    case queue:out(StateData#state.room_queue) of
+    case p1_queue:out(StateData#state.room_queue) of
       {{value, {message, From}}, _RoomQueue} ->
 	  Activity = get_user_activity(From, StateData),
 	  Packet = Activity#activity.message,
@@ -1775,14 +1770,12 @@ nick_collision(User, Nick, StateData) ->
       jid:remove_resource(jid:tolower(UserOfNick))
 	/= jid:remove_resource(jid:tolower(User))).
 
--spec add_new_user(jid(), binary(), presence() | iq(), state()) ->
-			  state() |
-			  {error, stanza_error()} |
-			  {ignore, state()} |
-			  {result, xmpp_element(), state()}.
+-spec add_new_user(jid(), binary(), presence(), state()) -> state();
+		  (jid(), binary(), iq(), state()) -> {error, stanza_error()} |
+						      {ignore, state()} |
+						      {result, muc_subscribe(), state()}.
 add_new_user(From, Nick, Packet, StateData) ->
     Lang = xmpp:get_lang(Packet),
-    UserRoomJID = jid:replace_resource(StateData#state.jid, Nick),
     MaxUsers = get_max_users(StateData),
     MaxAdminUsers = MaxUsers +
 		      get_max_users_admin_threshold(StateData),
@@ -1813,7 +1806,7 @@ add_new_user(From, Nick, Packet, StateData) ->
 	  Txt = <<"Too many users in this conference">>,
 	  Err = xmpp:err_resource_constraint(Txt, Lang),
 	  if not IsSubscribeRequest ->
-		  ejabberd_router:route_error(UserRoomJID, From, Packet, Err),
+		  ejabberd_router:route_error(Packet, Err),
 		  StateData;
 	     true ->
 		  {error, Err}
@@ -1822,7 +1815,7 @@ add_new_user(From, Nick, Packet, StateData) ->
 	  Txt = <<"You have joined too many conferences">>,
 	  Err = xmpp:err_resource_constraint(Txt, Lang),
 	  if not IsSubscribeRequest ->
-		  ejabberd_router:route_error(UserRoomJID, From, Packet, Err),
+		  ejabberd_router:route_error(Packet, Err),
 		  StateData;
 	     true ->
 		  {error, Err}
@@ -1830,7 +1823,7 @@ add_new_user(From, Nick, Packet, StateData) ->
       {false, _, _, _} ->
 	  Err = xmpp:err_service_unavailable(),
 	  if not IsSubscribeRequest ->
-		  ejabberd_router:route_error(UserRoomJID, From, Packet, Err),
+		  ejabberd_router:route_error(Packet, Err),
 		  StateData;
 	     true ->
 		  {error, Err}
@@ -1845,7 +1838,7 @@ add_new_user(From, Nick, Packet, StateData) ->
 			xmpp:err_registration_required(ErrText, Lang)
 		end,
 	  if not IsSubscribeRequest ->
-		  ejabberd_router:route_error(UserRoomJID, From, Packet, Err),
+		  ejabberd_router:route_error(Packet, Err),
 		  StateData;
 	     true ->
 		  {error, Err}
@@ -1854,7 +1847,7 @@ add_new_user(From, Nick, Packet, StateData) ->
 	  ErrText = <<"That nickname is already in use by another occupant">>,
 	  Err = xmpp:err_conflict(ErrText, Lang),
 	  if not IsSubscribeRequest ->
-		  ejabberd_router:route_error(UserRoomJID, From, Packet, Err),
+		  ejabberd_router:route_error(Packet, Err),
 		  StateData;
 	     true ->
 		  {error, Err}
@@ -1863,7 +1856,7 @@ add_new_user(From, Nick, Packet, StateData) ->
 	  ErrText = <<"That nickname is registered by another person">>,
 	  Err = xmpp:err_conflict(ErrText, Lang),
 	  if not IsSubscribeRequest ->
-		  ejabberd_router:route_error(UserRoomJID, From, Packet, Err),
+		  ejabberd_router:route_error(Packet, Err),
 		  StateData;
 	     true ->
 		  {error, Err}
@@ -1900,11 +1893,11 @@ add_new_user(From, Nick, Packet, StateData) ->
 		  if not IsSubscribeRequest -> ResultState;
 		     true -> {result, subscribe_result(Packet), ResultState}
 		  end;
-	    nopass ->
+	    need_password ->
 		ErrText = <<"A password is required to enter this room">>,
 		Err = xmpp:err_not_authorized(ErrText, Lang),
 		if not IsSubscribeRequest ->
-			ejabberd_router:route_error(UserRoomJID, From, Packet, Err),
+			ejabberd_router:route_error(Packet, Err),
 			StateData;
 		   true ->
 			{error, Err}
@@ -1918,11 +1911,13 @@ add_new_user(From, Nick, Packet, StateData) ->
 						     Lang, Limiter, From)
                    of
 		  {ok, ID, Body, CaptchaEls} ->
-		      MsgPkt = #message{id = ID, body = Body,
+		      MsgPkt = #message{from = RoomJID,
+					to = From,
+					id = ID, body = Body,
 					sub_els = CaptchaEls},
 		      Robots = (?DICT):store(From, {Nick, Packet},
 					     StateData#state.robots),
-		      ejabberd_router:route(RoomJID, From, MsgPkt),
+		      ejabberd_router:route(MsgPkt),
 		      NewState = StateData#state{robots = Robots},
 		      if not IsSubscribeRequest ->
 			      NewState;
@@ -1933,8 +1928,7 @@ add_new_user(From, Nick, Packet, StateData) ->
 		      ErrText = <<"Too many CAPTCHA requests">>,
 		      Err = xmpp:err_resource_constraint(ErrText, Lang),
 		      if not IsSubscribeRequest ->
-			      ejabberd_router:route_error(
-				UserRoomJID, From, Packet, Err),
+			      ejabberd_router:route_error(Packet, Err),
 			      StateData;
 			 true ->
 			      {error, Err}
@@ -1943,8 +1937,7 @@ add_new_user(From, Nick, Packet, StateData) ->
 		      ErrText = <<"Unable to generate a CAPTCHA">>,
 		      Err = xmpp:err_internal_server_error(ErrText, Lang),
 		      if not IsSubscribeRequest ->
-			      ejabberd_router:route_error(
-				UserRoomJID, From, Packet, Err),
+			      ejabberd_router:route_error(Packet, Err),
 			      StateData;
 			 true ->
 			      {error, Err}
@@ -1954,8 +1947,7 @@ add_new_user(From, Nick, Packet, StateData) ->
 		ErrText = <<"Incorrect password">>,
 		Err = xmpp:err_not_authorized(ErrText, Lang),
 		if not IsSubscribeRequest ->
-			ejabberd_router:route_error(
-			  UserRoomJID, From, Packet, Err),
+			ejabberd_router:route_error(Packet, Err),
 			StateData;
 		   true ->
 			{error, Err}
@@ -1964,7 +1956,8 @@ add_new_user(From, Nick, Packet, StateData) ->
     end.
 
 -spec check_password(affiliation(), affiliation(),
-		     stanza(), jid(), state()) -> boolean() | nopass.
+		     presence() | iq(), jid(), state()) ->
+      boolean() | need_password | captcha_required.
 check_password(owner, _Affiliation, _Packet, _From,
 	       _StateData) ->
     %% Don't check pass if user is owner in MUC service (access_admin option)
@@ -1977,7 +1970,7 @@ check_password(_ServiceAffiliation, Affiliation, Packet,
       true ->
 	  Pass = extract_password(Packet),
 	  case Pass of
-	    false -> nopass;
+	    false -> need_password;
 	    _ ->
 		case (StateData#state.config)#config.password of
 		  Pass -> true;
@@ -2015,13 +2008,17 @@ check_captcha(Affiliation, From, StateData) ->
       _ -> true
     end.
 
--spec extract_password(stanza()) -> binary() | false.
-extract_password(Packet) ->
-    case {xmpp:get_subtag(Packet, #muc{}),
-          xmpp:get_subtag(Packet, #muc_subscribe{})} of
-	{#muc{password = Password}, _} when is_binary(Password) ->
+-spec extract_password(presence() | iq()) -> binary() | false.
+extract_password(#presence{} = Pres) ->
+    case xmpp:get_subtag(Pres, #muc{}) of
+	#muc{password = Password} when is_binary(Password) ->
 	    Password;
-	{_, #muc_subscribe{password = Password}} when is_binary(Password) ->
+	_ ->
+	    false
+    end;
+extract_password(#iq{} = IQ) ->
+    case xmpp:get_subtag(IQ, #muc_subscribe{}) of
+	#muc_subscribe{password = Password} when Password /= <<"">> ->
 	    Password;
 	_ ->
 	    false
@@ -2033,38 +2030,34 @@ get_history(Nick, Packet, #state{history = History}) ->
 	#muc{history = #muc_history{} = MUCHistory} ->
 	    Now = p1_time_compat:timestamp(),
 	    Q = History#lqueue.queue,
-	    {NewQ, Len} = filter_history(Q, MUCHistory, Now, Nick, queue:new(), 0, 0),
-	    History#lqueue{queue = NewQ, len = Len};
+	    filter_history(Q, Now, Nick, MUCHistory);
 	_ ->
-	    History
+	    p1_queue:to_list(History#lqueue.queue)
     end.
 
--spec filter_history(?TQUEUE, muc_history(), erlang:timestamp(), binary(),
-		     ?TQUEUE, non_neg_integer(), non_neg_integer()) ->
-			    {?TQUEUE, non_neg_integer()}.
-filter_history(Queue, #muc_history{since = Since,
-				   seconds = Seconds,
-				   maxstanzas = MaxStanzas,
-				   maxchars = MaxChars} = MUC,
-	       Now, Nick, AccQueue, NumStanzas, NumChars) ->
-    case queue:out_r(Queue) of
-	{{value, {_, _, _, TimeStamp, Size} = Elem}, NewQueue} ->
-	    NowDiff = timer:now_diff(Now, TimeStamp) div 1000000,
-	    Chars = Size + byte_size(Nick) + 1,
-	    if (NumStanzas < MaxStanzas) andalso
-	       (TimeStamp > Since) andalso
-	       (NowDiff =< Seconds) andalso
-	       (NumChars + Chars =< MaxChars) ->
-		    filter_history(NewQueue, MUC, Now, Nick,
-				   queue:in_r(Elem, AccQueue),
-				   NumStanzas + 1,
-				   NumChars + Chars);
-	       true ->
-		    {AccQueue, NumStanzas}
-	    end;
-	{empty, _} ->
-	    {AccQueue, NumStanzas}
-    end.
+-spec filter_history(p1_queue:queue(), erlang:timestamp(),
+		     binary(), muc_history()) -> list().
+filter_history(Queue, Now, Nick,
+	       #muc_history{since = Since,
+			    seconds = Seconds,
+			    maxstanzas = MaxStanzas,
+			    maxchars = MaxChars}) ->
+    {History, _, _} =
+	lists:foldr(
+	  fun({_, _, _, TimeStamp, Size} = Elem,
+	      {Elems, NumStanzas, NumChars} = Acc) ->
+		  NowDiff = timer:now_diff(Now, TimeStamp) div 1000000,
+		  Chars = Size + byte_size(Nick) + 1,
+		  if (NumStanzas < MaxStanzas) andalso
+		     (TimeStamp > Since) andalso
+		     (NowDiff =< Seconds) andalso
+		     (NumChars + Chars =< MaxChars) ->
+			  {[Elem|Elems], NumStanzas + 1, NumChars + Chars};
+		     true ->
+			  Acc
+		  end
+	  end, {[], 0, 0}, p1_queue:to_list(Queue)),
+    History.
 
 -spec is_room_overcrowded(state()) -> boolean().
 is_room_overcrowded(StateData) ->
@@ -2134,17 +2127,13 @@ send_new_presence(NJID, Reason, IsInitialPresence, StateData, OldStateData) ->
 				    OldStateData)
     end.
 
--spec is_ra_changed(jid() | ljid(), boolean(), state(), state()) -> boolean().
+-spec is_ra_changed(jid(), boolean(), state(), state()) -> boolean().
 is_ra_changed(_, _IsInitialPresence = true, _, _) ->
     false;
-is_ra_changed(LJID, _IsInitialPresence = false, NewStateData, OldStateData) ->
-    JID = case LJID of
-	      #jid{} -> LJID;
-	      _ -> jid:make(LJID)
-	  end,
-    NewRole = get_role(LJID, NewStateData),
+is_ra_changed(JID, _IsInitialPresence = false, NewStateData, OldStateData) ->
+    NewRole = get_role(JID, NewStateData),
     NewAff = get_affiliation(JID, NewStateData),
-    OldRole = get_role(LJID, OldStateData),
+    OldRole = get_role(JID, OldStateData),
     OldAff = get_affiliation(JID, OldStateData),
     if (NewRole == none) and (NewAff == OldAff) ->
 	    %% A user is leaving the room;
@@ -2421,31 +2410,28 @@ status_codes(IsInitialPresence, _IsSelfPresence = true, StateData) ->
     end;
 status_codes(_IsInitialPresence, _IsSelfPresence = false, _StateData) -> [].
 
--spec lqueue_new(non_neg_integer()) -> lqueue().
-lqueue_new(Max) ->
-    #lqueue{queue = queue:new(), len = 0, max = Max}.
+-spec lqueue_new(non_neg_integer(), ram | file) -> lqueue().
+lqueue_new(Max, Type) ->
+    #lqueue{queue = p1_queue:new(Type), max = Max}.
 
 -spec lqueue_in(term(), lqueue()) -> lqueue().
 %% If the message queue limit is set to 0, do not store messages.
 lqueue_in(_Item, LQ = #lqueue{max = 0}) -> LQ;
 %% Otherwise, rotate messages in the queue store.
-lqueue_in(Item,
-	  #lqueue{queue = Q1, len = Len, max = Max}) ->
-    Q2 = queue:in(Item, Q1),
+lqueue_in(Item, #lqueue{queue = Q1, max = Max}) ->
+    Len = p1_queue:len(Q1),
+    Q2 = p1_queue:in(Item, Q1),
     if Len >= Max ->
 	   Q3 = lqueue_cut(Q2, Len - Max + 1),
-	   #lqueue{queue = Q3, len = Max, max = Max};
-       true -> #lqueue{queue = Q2, len = Len + 1, max = Max}
+	   #lqueue{queue = Q3, max = Max};
+       true -> #lqueue{queue = Q2, max = Max}
     end.
 
--spec lqueue_cut(queue:queue(), non_neg_integer()) -> queue:queue().
+-spec lqueue_cut(p1_queue:queue(), non_neg_integer()) -> p1_queue:queue().
 lqueue_cut(Q, 0) -> Q;
 lqueue_cut(Q, N) ->
-    {_, Q1} = queue:out(Q), lqueue_cut(Q1, N - 1).
-
--spec lqueue_to_list(lqueue()) -> list().
-lqueue_to_list(#lqueue{queue = Q1}) ->
-    queue:to_list(Q1).
+    {_, Q1} = p1_queue:out(Q),
+    lqueue_cut(Q1, N - 1).
 
 -spec add_message_to_history(binary(), jid(), message(), state()) -> state().
 add_message_to_history(FromNick, FromJID, Packet, StateData) ->
@@ -2476,14 +2462,16 @@ add_message_to_history(FromNick, FromJID, Packet, StateData) ->
 	    StateData
     end.
 
--spec send_history(jid(), lqueue(), state()) -> boolean().
+-spec send_history(jid(), list(), state()) -> ok.
 send_history(JID, History, StateData) ->
     lists:foreach(
       fun({Nick, Packet, _HaveSubject, _TimeStamp, _Size}) ->
 	      ejabberd_router:route(
-		jid:replace_resource(StateData#state.jid, Nick),
-		JID, Packet)
-      end, lqueue_to_list(History)).
+		xmpp:set_from_to(
+		  Packet,
+		  jid:replace_resource(StateData#state.jid, Nick),
+		  JID))
+      end, History).
 
 -spec send_subject(jid(), state()) -> ok.
 send_subject(JID, #state{subject_author = Nick} = StateData) ->
@@ -2491,9 +2479,9 @@ send_subject(JID, #state{subject_author = Nick} = StateData) ->
 		  <<"">> -> [#text{}];
 		  Subj -> xmpp:mk_text(Subj)
 	      end,
-    Packet = #message{type = groupchat, subject = Subject},
-    ejabberd_router:route(jid:replace_resource(StateData#state.jid, Nick), JID,
-			  Packet).
+    Packet = #message{from = jid:replace_resource(StateData#state.jid, Nick),
+		      to = JID, type = groupchat, subject = Subject},
+    ejabberd_router:route(Packet).
 
 -spec check_subject(message()) -> false | binary().
 check_subject(#message{subject = [_|_] = Subj, body = [],
@@ -2613,8 +2601,8 @@ process_admin_items_set(UJID, Items, Lang, StateData) ->
       {result, Res} ->
 	  ?INFO_MSG("Processing MUC admin query from ~s in "
 		    "room ~s:~n ~p",
-		    [jid:to_string(UJID),
-		     jid:to_string(StateData#state.jid), Res]),
+		    [jid:encode(UJID),
+		     jid:encode(StateData#state.jid), Res]),
 	  case lists:foldl(process_item_change(UJID),
 			   StateData, lists:flatten(Res)) of
 	      {error, _} = Err ->
@@ -2688,7 +2676,7 @@ process_item_change(Item, SD, UJID) ->
 	end
     catch E:R ->
 	    ?ERROR_MSG("failed to set item ~p from ~s: ~p",
-		       [Item, jid:to_string(UJID),
+		       [Item, jid:encode(UJID),
 			{E, {R, erlang:get_stacktrace()}}]),
 	    {error, xmpp:err_internal_server_error()}
     end.
@@ -2700,7 +2688,7 @@ find_changed_items(_UJID, _UAffiliation, _URole, [],
 		   _Lang, _StateData, Res) ->
     {result, Res};
 find_changed_items(_UJID, _UAffiliation, _URole,
-		   [#muc_item{jid = undefined, nick = undefined}|_],
+		   [#muc_item{jid = undefined, nick = <<"">>}|_],
 		   Lang, _StateData, _Res) ->
     Txt = <<"Neither 'jid' nor 'nick' attribute found">>,
     throw({error, xmpp:err_bad_request(Txt, Lang)});
@@ -2768,16 +2756,16 @@ find_changed_items(UJID, UAffiliation, URole,
 		      end,
 	    find_changed_items(UJID, UAffiliation, URole,
 			       Items, Lang, StateData,
-			       [MoreRes | Res]);
+			       MoreRes ++ Res);
 	false ->
 	    Txt = <<"Changing role/affiliation is not allowed">>,
 	    throw({error, xmpp:err_not_allowed(Txt, Lang)})
     end.
 
 -spec can_change_ra(affiliation(), role(), affiliation(), role(),
-		    affiliation, affiliation(), affiliation()) -> boolean();
+		    affiliation, affiliation(), affiliation()) -> boolean() | nothing | check_owner;
 		   (affiliation(), role(), affiliation(), role(),
-		    role, role(), affiliation()) -> boolean().
+		    role, role(), affiliation()) -> boolean() | nothing | check_owner.
 can_change_ra(_FAffiliation, _FRole, owner, _TRole,
 	      affiliation, owner, owner) ->
     %% A room owner tries to add as persistent owner a
@@ -2902,14 +2890,14 @@ can_change_ra(_FAffiliation, _FRole, _TAffiliation,
 	      _TRole, role, _Value, _ServiceAf) ->
     false.
 
--spec send_kickban_presence(jid(), jid(), binary(),
+-spec send_kickban_presence(undefined | jid(), jid(), binary(),
 			    pos_integer(), state()) -> ok.
 send_kickban_presence(UJID, JID, Reason, Code, StateData) ->
     NewAffiliation = get_affiliation(JID, StateData),
     send_kickban_presence(UJID, JID, Reason, Code, NewAffiliation,
 			  StateData).
 
--spec send_kickban_presence(jid(), jid(), binary(), pos_integer(),
+-spec send_kickban_presence(undefined | jid(), jid(), binary(), pos_integer(),
 			    affiliation(), state()) -> ok.
 send_kickban_presence(UJID, JID, Reason, Code, NewAffiliation,
 		      StateData) ->
@@ -2939,7 +2927,7 @@ send_kickban_presence(UJID, JID, Reason, Code, NewAffiliation,
 		  end,
 		  LJIDs).
 
--spec send_kickban_presence1(jid(), jid(), binary(), pos_integer(),
+-spec send_kickban_presence1(undefined | jid(), jid(), binary(), pos_integer(),
 			     affiliation(), state()) -> ok.
 send_kickban_presence1(MJID, UJID, Reason, Code, Affiliation,
 		       StateData) ->
@@ -2983,8 +2971,8 @@ send_kickban_presence1(MJID, UJID, Reason, Code, Affiliation,
       end,
 		  (?DICT):to_list(get_users_and_subscribers(StateData))).
 
--spec get_actor_nick(binary() | jid(), state()) -> binary().
-get_actor_nick(<<"">>, _StateData) ->
+-spec get_actor_nick(undefined | jid(), state()) -> binary().
+get_actor_nick(undefined, _StateData) ->
     <<"">>;
 get_actor_nick(MJID, StateData) ->
     case (?DICT):find(jid:tolower(MJID), StateData#state.users) of
@@ -3033,7 +3021,7 @@ process_iq_owner(From, #iq{type = set, lang = Lang,
 	    {error, xmpp:err_forbidden(ErrText, Lang)};
        Destroy /= undefined, Config == undefined, Items == [] ->
 	    ?INFO_MSG("Destroyed MUC room ~s by the owner ~s",
-		      [jid:to_string(StateData#state.jid), jid:to_string(From)]),
+		      [jid:encode(StateData#state.jid), jid:encode(From)]),
 	    add_to_log(room_existence, destroyed, StateData),
 	    destroy_room(Destroy, StateData);
        Config /= undefined, Destroy == undefined, Items == [] ->
@@ -3175,15 +3163,10 @@ get_config(Lang, StateData, From) ->
     ServiceMaxUsers = get_service_max_users(StateData),
     DefaultRoomMaxUsers = get_default_room_maxusers(StateData),
     Config = StateData#state.config,
-    {MaxUsersRoomInteger, MaxUsersRoomString} =
-	case get_max_users(StateData) of
-	    N when is_integer(N) ->
-		{N, N};
-	    _ -> {0, none}
-	end,
+    MaxUsersRoom = get_max_users(StateData),
     Title = str:format(
 	      translate:translate(Lang, <<"Configuration of room ~s">>),
-	      [jid:to_string(StateData#state.jid)]),
+	      [jid:encode(StateData#state.jid)]),
     Fs = [{roomname, Config#config.title},
 	  {roomdesc, Config#config.description}] ++
 	case acl:match_rule(StateData#state.server_host, AccessPersistent, From) of
@@ -3197,13 +3180,13 @@ get_config(Lang, StateData, From) ->
 			  true -> Config#config.password;
 			  false -> <<"">>
 		      end},
-	 {maxusers, MaxUsersRoomString,
+	 {maxusers, MaxUsersRoom,
 	  [if is_integer(ServiceMaxUsers) -> [];
 	      true -> [{<<"No limit">>, <<"none">>}]
 	   end] ++ [{integer_to_binary(N), N}
 		    || N <- lists:usort([ServiceMaxUsers,
 					 DefaultRoomMaxUsers,
-					 MaxUsersRoomInteger
+					 MaxUsersRoom
 					 | ?MAX_USERS_DEFAULT_LIST]),
 		       N =< ServiceMaxUsers]},
 	 {whois, if Config#config.anonymous -> moderators;
@@ -3241,8 +3224,7 @@ get_config(Lang, StateData, From) ->
 				     Fs,
 				     [StateData, From, Lang]),
     #xdata{type = form, title = Title,
-	   fields = muc_roomconfig:encode(
-		      Fields, fun(T) -> translate:translate(Lang, T) end)}.
+	   fields = muc_roomconfig:encode(Fields, Lang)}.
 
 -spec set_config(muc_roomconfig:result(), state(), binary()) ->
 			{error, stanza_error()} | {result, undefined, state()}.
@@ -3387,7 +3369,7 @@ remove_nonmembers(StateData) ->
 			Affiliation = get_affiliation(JID, SD),
 			case Affiliation of
 			  none ->
-			      catch send_kickban_presence(<<"">>, JID, <<"">>,
+			      catch send_kickban_presence(undefined, JID, <<"">>,
 							  322, SD),
 			      set_role(JID, none, SD);
 			  _ -> SD
@@ -3656,8 +3638,7 @@ iq_disco_info_extras(Lang, StateData) ->
     Fs = [{description, (StateData#state.config)#config.description},
 	  {occupants, ?DICT:size(StateData#state.users)}],
     #xdata{type = result,
-	   fields = muc_roominfo:encode(
-		      Fs, fun(T) -> translate:translate(Lang, T) end)}.
+	   fields = muc_roominfo:encode(Fs, Lang)}.
 
 -spec process_iq_disco_items(jid(), iq(), state()) ->
 				    {error, stanza_error()} | {result, disco_items()}.
@@ -3723,9 +3704,9 @@ process_iq_vcard(From, #iq{type = set, lang = Lang, sub_els = [SubEl]},
     end.
 
 -spec process_iq_mucsub(jid(), iq(), state()) ->
-			       {error, stanza_error()} |
-			       {result, undefined | muc_subscribe(), state()} |
-			       {ignore, state()}.
+      {error, stanza_error()} |
+      {result, undefined | muc_subscribe() | muc_subscriptions(), state()} |
+      {ignore, state()}.
 process_iq_mucsub(_From, #iq{type = set, lang = Lang,
 			     sub_els = [#muc_subscribe{}]},
 		  #state{just_created = false, config = #config{allow_subscription = false}}) ->
@@ -3805,7 +3786,7 @@ remove_subscriptions(StateData) ->
 	    StateData
     end.
 
--spec get_subscription_nodes(iq()) -> [binary()].
+-spec get_subscription_nodes(stanza()) -> [binary()].
 get_subscription_nodes(#iq{sub_els = [#muc_subscribe{events = Nodes}]}) ->
     lists:filter(
       fun(Node) ->
@@ -3878,7 +3859,7 @@ prepare_request_form(Requester, Nick, Lang) ->
 			     {jid, Requester},
 			     {roomnick, Nick},
 			     {request_allow, false}],
-			    fun(T) -> translate:translate(Lang, T) end),
+			    Lang),
     #message{type = normal,
 	     sub_els = [#xdata{type = form,
 			       title = Title,
@@ -3889,12 +3870,13 @@ prepare_request_form(Requester, Nick, Lang) ->
 send_voice_request(From, Lang, StateData) ->
     Moderators = search_role(moderator, StateData),
     FromNick = find_nick_by_jid(From, StateData),
-    lists:foreach(fun ({_, User}) ->
-			  ejabberd_router:route(
-			    StateData#state.jid, User#user.jid,
-			    prepare_request_form(From, FromNick, Lang))
-		  end,
-		  Moderators).
+    lists:foreach(
+      fun({_, User}) ->
+	      ejabberd_router:route(
+		xmpp:set_from_to(
+		  prepare_request_form(From, FromNick, Lang),
+		  StateData#state.jid, User#user.jid))
+      end, Moderators).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % Invitation support
@@ -3940,8 +3922,8 @@ route_invitation(From, Invitation, Lang, StateData) ->
 		translate:translate(
 		  Lang,
 		  <<"~s invites you to the room ~s">>),
-		[jid:to_string(From),
-		 jid:to_string({StateData#state.room, StateData#state.host, <<"">>})]),
+		[jid:encode(From),
+		 jid:encode({StateData#state.room, StateData#state.host, <<"">>})]),
 	      case (StateData#state.config)#config.password_protected of
 		  true ->
 		      <<", ",
@@ -3956,13 +3938,15 @@ route_invitation(From, Invitation, Lang, StateData) ->
 		  <<"">> -> <<"">>;
 		  _ -> <<" (", Reason/binary, ") ">>
 	      end]),
-    Msg = #message{type = normal,
+    Msg = #message{from = StateData#state.jid,
+		   to = JID,
+		   type = normal,
 		   body = xmpp:mk_text(Body),
 		   sub_els = [XUser, XConference]},
     ejabberd_hooks:run(muc_invite, StateData#state.server_host,
 		       [StateData#state.jid, StateData#state.config,
 			From, JID, Reason]),
-    ejabberd_router:route(StateData#state.jid, JID, Msg),
+    ejabberd_router:route(Msg),
     JID.
 
 %% Handle a message sent to the room by a non-participant.
@@ -3975,12 +3959,13 @@ handle_roommessage_from_nonparticipant(Packet, StateData, From) ->
 	    NewDecline = Decline#muc_decline{to = undefined, from = From},
 	    NewXUser = XUser#muc_user{decline = NewDecline},
 	    NewPacket = xmpp:set_subtag(Packet, NewXUser),
-	    ejabberd_router:route(StateData#state.jid, To, NewPacket);
+	    ejabberd_router:route(
+	      xmpp:set_from_to(NewPacket, StateData#state.jid, To));
 	_ ->
 	    ErrText = <<"Only occupants are allowed to send messages "
 			"to the conference">>,
 	    Err = xmpp:err_not_acceptable(ErrText, xmpp:get_lang(Packet)),
-	    ejabberd_router:route_error(StateData#state.jid, From, Packet, Err)
+	    ejabberd_router:route_error(Packet, Err)
     end.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -4052,7 +4037,8 @@ send_wrapped(From, To, Packet, Node, State) ->
 	    case lists:member(Node, Nodes) of
 		true ->
 			    NewPacket = wrap(From, JID, Packet, Node),
-			    ejabberd_router:route(State#state.jid, JID, NewPacket);
+			    ejabberd_router:route(
+			      xmpp:set_from_to(NewPacket, State#state.jid, JID));
 		false ->
 		    ok
 	    end;
@@ -4060,7 +4046,7 @@ send_wrapped(From, To, Packet, Node, State) ->
 		    ok
 	    end;
        true ->
-	    ejabberd_router:route(From, To, Packet)
+	    ejabberd_router:route(xmpp:set_from_to(Packet, From, To))
     end.
 
 -spec wrap(jid(), jid(), stanza(), binary()) -> message().
@@ -4079,7 +4065,7 @@ wrap(From, To, Packet, Node) ->
 %%     JIDs = [ User#user.jid || {_, User} <- ?DICT:to_list(Users)],
 %%     ejabberd_router_multicast:route_multicast(From, Server, JIDs, Packet).
 
--spec send_wrapped_multiple(jid(), [#user{}], stanza(), binary(), state()) -> ok.
+-spec send_wrapped_multiple(jid(), ?TDICT, stanza(), binary(), state()) -> ok.
 send_wrapped_multiple(From, Users, Packet, Node, State) ->
     lists:foreach(
       fun({_, #user{jid = To}}) ->

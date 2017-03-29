@@ -29,19 +29,22 @@
 
 -author('alexey@process-one.net').
 
--behaviour(gen_server).
+-ifndef(GEN_SERVER).
+-define(GEN_SERVER, gen_server).
+-endif.
+-behaviour(?GEN_SERVER).
 
 %% API
--export([start/0,
-	 start_link/0,
+-export([start_link/0,
+	 stop/0,
+	 route/1,
 	 route/2,
-	 route/3,
-	 process_iq/3,
+	 process_iq/1,
 	 open_session/5,
 	 open_session/6,
 	 close_session/4,
 	 check_in_subscription/6,
-	 bounce_offline_message/4,
+	 bounce_offline_message/1,
 	 disconnect_removed_user/2,
 	 get_user_resources/2,
 	 get_user_present_resources/2,
@@ -55,7 +58,6 @@
 	 get_vh_session_list/1,
 	 get_vh_session_number/1,
 	 get_vh_by_backend/1,
-	 register_iq_handler/4,
 	 register_iq_handler/5,
 	 unregister_iq_handler/2,
 	 force_update_presence/1,
@@ -72,6 +74,8 @@
 	 is_existing_resource/3,
 	 get_commands_spec/0,
 	 c2s_handle_info/2,
+	 host_up/1,
+	 host_down/1,
 	 make_sid/0
 	]).
 
@@ -105,13 +109,14 @@
 %%====================================================================
 -export_type([sid/0, info/0]).
 
-start() ->
-    ChildSpec = {?MODULE, {?MODULE, start_link, []},
-		 transient, 1000, worker, [?MODULE]},
-    supervisor:start_child(ejabberd_sup, ChildSpec).
-
 start_link() ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+    ?GEN_SERVER:start_link({local, ?MODULE}, ?MODULE, [], []).
+
+-spec stop() -> ok.
+stop() ->
+    supervisor:terminate_child(ejabberd_sup, ?MODULE),
+    supervisor:delete_child(ejabberd_sup, ?MODULE),
+    ok.
 
 -spec route(jid(), term()) -> ok.
 %% @doc route arbitrary term to c2s process(es)
@@ -124,14 +129,12 @@ route(To, Term) ->
 	    ok
     end.
 
--spec route(jid(), jid(), stanza()) -> ok.
-
-route(From, To, Packet) ->
-    case catch do_route(From, To, Packet) of
-      {'EXIT', Reason} ->
-	  ?ERROR_MSG("~p~nwhen processing: ~p",
-		     [Reason, {From, To, Packet}]);
-      _ -> ok
+-spec route(stanza()) -> ok.
+route(Packet) ->
+    try do_route(Packet), ok
+    catch E:R ->
+            ?ERROR_MSG("failed to route packet:~n~s~nReason = ~p",
+                       [xmpp:pp(Packet), {E, {R, erlang:get_stacktrace()}}])
     end.
 
 -spec open_session(sid(), binary(), binary(), binary(), prio(), info()) -> ok.
@@ -172,21 +175,21 @@ check_in_subscription(Acc, User, Server, _JID, _Type, _Reason) ->
       false -> {stop, false}
     end.
 
--spec bounce_offline_message(bounce | any(), jid(), jid(), message()) -> stop.
+-spec bounce_offline_message({bounce, message()} | any()) -> any().
 
-bounce_offline_message(bounce = Acc, From, To, Packet) ->
+bounce_offline_message({bounce, Packet} = Acc) ->
     Lang = xmpp:get_lang(Packet),
     Txt = <<"User session not found">>,
     Err = xmpp:err_service_unavailable(Txt, Lang),
-    ejabberd_router:route_error(To, From, Packet, Err),
+    ejabberd_router:route_error(Packet, Err),
     {stop, Acc};
-bounce_offline_message(Acc, _From, _To, _Packet) ->
+bounce_offline_message(Acc) ->
     Acc.
 
 -spec disconnect_removed_user(binary(), binary()) -> ok.
 
 disconnect_removed_user(User, Server) ->
-    route(jid:make(User, Server, <<"">>), {exit, <<"User removed">>}).
+    route(jid:make(User, Server), {exit, <<"User removed">>}).
 
 get_user_resources(User, Server) ->
     LUser = jid:nodeprep(User),
@@ -356,18 +359,16 @@ get_vh_session_number(Server) ->
     Mod = get_sm_backend(LServer),
     length(online(Mod:get_sessions(LServer))).
 
-register_iq_handler(Host, XMLNS, Module, Fun) ->
-    ejabberd_sm ! {register_iq_handler, Host, XMLNS, Module, Fun}.
-
--spec register_iq_handler(binary(), binary(), atom(), atom(), list()) -> any().
+-spec register_iq_handler(binary(), binary(), atom(), atom(), list()) -> ok.
 
 register_iq_handler(Host, XMLNS, Module, Fun, Opts) ->
-    ejabberd_sm ! {register_iq_handler, Host, XMLNS, Module, Fun, Opts}.
+    ?GEN_SERVER:cast(?MODULE,
+		    {register_iq_handler, Host, XMLNS, Module, Fun, Opts}).
 
--spec unregister_iq_handler(binary(), binary()) -> any().
+-spec unregister_iq_handler(binary(), binary()) -> ok.
 
 unregister_iq_handler(Host, XMLNS) ->
-    ejabberd_sm ! {unregister_iq_handler, Host, XMLNS}.
+    ?GEN_SERVER:cast(?MODULE, {unregister_iq_handler, Host, XMLNS}).
 
 %% Why the hell do we have so many similar kicks?
 c2s_handle_info(#{lang := Lang} = State, replaced) ->
@@ -390,47 +391,25 @@ c2s_handle_info(State, _) ->
 %%====================================================================
 
 init([]) ->
+    process_flag(trap_exit, true),
     lists:foreach(fun(Mod) -> Mod:init() end, get_sm_backends()),
     ets:new(sm_iqtable, [named_table, public]),
-    lists:foreach(
-      fun(Host) ->
-	      ejabberd_hooks:add(c2s_handle_info, Host,
-				 ejabberd_sm, c2s_handle_info, 50),
-	      ejabberd_hooks:add(roster_in_subscription, Host,
-				 ejabberd_sm, check_in_subscription, 20),
-	      ejabberd_hooks:add(offline_message_hook, Host,
-				 ejabberd_sm, bounce_offline_message, 100),
-	      ejabberd_hooks:add(remove_user, Host,
-				 ejabberd_sm, disconnect_removed_user, 100),
-	      ejabberd_c2s:add_hooks(Host)
-      end, ?MYHOSTS),
+    ejabberd_hooks:add(host_up, ?MODULE, host_up, 50),
+    ejabberd_hooks:add(host_down, ?MODULE, host_down, 60),
+    lists:foreach(fun host_up/1, ?MYHOSTS),
     ejabberd_commands:register_commands(get_commands_spec()),
     {ok, #state{}}.
 
 handle_call(_Request, _From, State) ->
     Reply = ok, {reply, Reply, State}.
 
-handle_cast(_Msg, State) -> {noreply, State}.
-
-handle_info({route, From, To, Packet}, State) ->
-    case catch do_route(From, To, Packet) of
-	{'EXIT', Reason} ->
-	    ?ERROR_MSG("~p~nwhen processing: ~p",
-		       [Reason, {From, To, Packet}]);
-	_ ->
-	    ok
-    end,
-    {noreply, State};
-handle_info({register_iq_handler, Host, XMLNS, Module, Function}, State) ->
-    ets:insert(sm_iqtable, {{Host, XMLNS}, Module, Function}),
-    {noreply, State};
-handle_info({register_iq_handler, Host, XMLNS, Module,
+handle_cast({register_iq_handler, Host, XMLNS, Module,
 	     Function, Opts},
 	    State) ->
     ets:insert(sm_iqtable,
 	       {{Host, XMLNS}, Module, Function, Opts}),
     {noreply, State};
-handle_info({unregister_iq_handler, Host, XMLNS},
+handle_cast({unregister_iq_handler, Host, XMLNS},
 	    State) ->
     case ets:lookup(sm_iqtable, {Host, XMLNS}) of
       [{_, Module, Function, Opts}] ->
@@ -439,20 +418,19 @@ handle_info({unregister_iq_handler, Host, XMLNS},
     end,
     ets:delete(sm_iqtable, {Host, XMLNS}),
     {noreply, State};
-handle_info(_Info, State) -> {noreply, State}.
+handle_cast(_Msg, State) -> {noreply, State}.
+
+handle_info({route, Packet}, State) ->
+    route(Packet),
+    {noreply, State};
+handle_info(Info, State) ->
+    ?WARNING_MSG("unexpected info: ~p", [Info]),
+    {noreply, State}.
 
 terminate(_Reason, _State) ->
-    lists:foreach(
-      fun(Host) ->
-	      ejabberd_hooks:delete(c2s_handle_info, Host,
-				    ejabberd_sm, c2s_handle_info, 50),
-	      ejabberd_hooks:delete(roster_in_subscription, Host,
-				    ejabberd_sm, check_in_subscription, 20),
-	      ejabberd_hooks:delete(offline_message_hook, Host,
-				    ejabberd_sm, bounce_offline_message, 100),
-	      ejabberd_hooks:delete(remove_user, Host,
-				    ejabberd_sm, disconnect_removed_user, 100)
-      end, ?MYHOSTS),
+    lists:foreach(fun host_down/1, ?MYHOSTS),
+    ejabberd_hooks:delete(host_up, ?MODULE, host_up, 50),
+    ejabberd_hooks:delete(host_down, ?MODULE, host_down, 60),
     ejabberd_commands:unregister_commands(get_commands_spec()),
     ok.
 
@@ -461,6 +439,36 @@ code_change(_OldVsn, State, _Extra) -> {ok, State}.
 %%--------------------------------------------------------------------
 %%% Internal functions
 %%--------------------------------------------------------------------
+-spec host_up(binary()) -> ok.
+host_up(Host) ->
+    ejabberd_hooks:add(c2s_handle_info, Host,
+		       ejabberd_sm, c2s_handle_info, 50),
+    ejabberd_hooks:add(roster_in_subscription, Host,
+		       ejabberd_sm, check_in_subscription, 20),
+    ejabberd_hooks:add(offline_message_hook, Host,
+		       ejabberd_sm, bounce_offline_message, 100),
+    ejabberd_hooks:add(remove_user, Host,
+		       ejabberd_sm, disconnect_removed_user, 100),
+    ejabberd_c2s:host_up(Host).
+
+-spec host_down(binary()) -> ok.
+host_down(Host) ->
+    Mod = get_sm_backend(Host),
+    lists:foreach(
+      fun(#session{sid = {_, Pid}}) when node(Pid) == node() ->
+	      ejabberd_c2s:send(Pid, xmpp:serr_system_shutdown());
+	 (_) ->
+	      ok
+      end, Mod:get_sessions(Host)),
+    ejabberd_hooks:delete(c2s_handle_info, Host,
+			  ejabberd_sm, c2s_handle_info, 50),
+    ejabberd_hooks:delete(roster_in_subscription, Host,
+			  ejabberd_sm, check_in_subscription, 20),
+    ejabberd_hooks:delete(offline_message_hook, Host,
+			  ejabberd_sm, bounce_offline_message, 100),
+    ejabberd_hooks:delete(remove_user, Host,
+			  ejabberd_sm, disconnect_removed_user, 100),
+    ejabberd_c2s:host_down(Host).
 
 -spec set_session(sid(), binary(), binary(), binary(),
                   prio(), info()) -> ok.
@@ -493,7 +501,7 @@ do_route(#jid{lresource = <<"">>} = To, Term) ->
 	      do_route(jid:replace_resource(To, R), Term)
       end, get_user_resources(To#jid.user, To#jid.server));
 do_route(To, Term) ->
-    ?DEBUG("broadcasting ~p to ~s", [Term, jid:to_string(To)]),
+    ?DEBUG("broadcasting ~p to ~s", [Term, jid:encode(To)]),
     {U, S, R} = jid:tolower(To),
     Mod = get_sm_backend(S),
     case online(Mod:get_sessions(U, S, R)) of
@@ -503,11 +511,11 @@ do_route(To, Term) ->
 	    Session = lists:max(Ss),
 	    Pid = element(2, Session#session.sid),
 	    ?DEBUG("sending to process ~p: ~p", [Pid, Term]),
-	    Pid ! Term
+	    ejabberd_c2s:route(Pid, Term)
     end.
 
--spec do_route(jid(), jid(), stanza()) -> any().
-do_route(From, To, #presence{type = T, status = Status} = Packet)
+-spec do_route(stanza()) -> any().
+do_route(#presence{from = From, to = To, type = T, status = Status} = Packet)
   when T == subscribe; T == subscribed; T == unsubscribe; T == unsubscribed ->
     ?DEBUG("processing subscription:~n~s", [xmpp:pp(Packet)]),
     #jid{user = User, server = Server,
@@ -515,7 +523,7 @@ do_route(From, To, #presence{type = T, status = Status} = Packet)
     Reason = if T == subscribe -> xmpp:get_text(Status);
 		true -> <<"">>
 	     end,
-    case is_privacy_allow(From, To, Packet) andalso
+    case is_privacy_allow(Packet) andalso
 	ejabberd_hooks:run_fold(
 	  roster_in_subscription,
 	  LServer, false,
@@ -526,33 +534,34 @@ do_route(From, To, #presence{type = T, status = Status} = Packet)
 	      fun(#session{sid = SID, usr = {_, _, R},
 			   priority = Prio}) when is_integer(Prio) ->
 		      Pid = element(2, SID),
+		      Packet1 = Packet#presence{to = jid:replace_resource(To, R)},
 		      ?DEBUG("sending to process ~p:~n~s",
-			     [Pid, xmpp:pp(Packet)]),
-		      Pid ! {route, From, jid:replace_resource(To, R), Packet};
+			     [Pid, xmpp:pp(Packet1)]),
+		      ejabberd_c2s:route(Pid, {route, Packet1});
 		 (_) ->
 		      ok
 	      end, online(Mod:get_sessions(LUser, LServer)));
 	false ->
 	    ok
     end;
-do_route(From, #jid{lresource = <<"">>} = To, #presence{} = Packet) ->
+do_route(#presence{to = #jid{lresource = <<"">>} = To} = Packet) ->
     ?DEBUG("processing presence to bare JID:~n~s", [xmpp:pp(Packet)]),
     {LUser, LServer, _} = jid:tolower(To),
     lists:foreach(
       fun({_, R}) ->
-	      do_route(From, jid:replace_resource(To, R), Packet)
+	      do_route(Packet#presence{to = jid:replace_resource(To, R)})
       end, get_user_present_resources(LUser, LServer));
-do_route(From, #jid{lresource = <<"">>} = To, #message{type = T} = Packet) ->
+do_route(#message{to = #jid{lresource = <<"">>}, type = T} = Packet) ->
     ?DEBUG("processing message to bare JID:~n~s", [xmpp:pp(Packet)]),
     if T == chat; T == headline; T == normal; T == groupchat ->
-	    route_message(From, To, Packet, T);
+	    route_message(Packet);
        true ->
 	    Lang = xmpp:get_lang(Packet),
 	    ErrTxt = <<"User session not found">>,
 	    Err = xmpp:err_service_unavailable(ErrTxt, Lang),
-	    ejabberd_router:route_error(To, From, Packet, Err)
+	    ejabberd_router:route_error(Packet, Err)
     end;
-do_route(From, #jid{lresource = <<"">>} = To, #iq{} = Packet) ->
+do_route(#iq{to = #jid{lresource = <<"">>}} = Packet) ->
     ?DEBUG("processing IQ to bare JID:~n~s", [xmpp:pp(Packet)]),
     process_iq(From, To, Packet);
 do_route(From, To, {Type, _} = Packet) ->
@@ -582,6 +591,7 @@ do_route(From, To, {Type, _} = Packet) ->
     end;
 do_route(From, To, Packet) ->
     ?DEBUG("processing packet to full JID:~n~s", [xmpp:pp(Packet)]),
+    To = xmpp:get_to(Packet),
     {LUser, LServer, LResource} = jid:tolower(To),
     Mod = get_sm_backend(LServer),
     case online(Mod:get_sessions(LUser, LServer, LResource)) of
@@ -589,7 +599,7 @@ do_route(From, To, Packet) ->
 	    case Packet of
 		#message{type = T} when T == chat; T == normal;
 					T == headline; T == groupchat ->
-		    route_message(From, To, Packet, T);
+		    route_message(Packet);
 		#presence{} ->
 		    ?DEBUG("dropping presence to unavalable resource:~n~s",
 			   [xmpp:pp(Packet)]);
@@ -597,13 +607,13 @@ do_route(From, To, Packet) ->
 		    Lang = xmpp:get_lang(Packet),
 		    ErrTxt = <<"User session not found">>,
 		    Err = xmpp:err_service_unavailable(ErrTxt, Lang),
-		    ejabberd_router:route_error(To, From, Packet, Err)
+		    ejabberd_router:route_error(Packet, Err)
 	    end;
 	Ss ->
 	    Session = lists:max(Ss),
 	    Pid = element(2, Session#session.sid),
 	    ?DEBUG("sending to process ~p:~n~s", [Pid, xmpp:pp(Packet)]),
-	    Pid ! {route, From, To, Packet}
+	    ejabberd_c2s:route(Pid, {route, Packet})
     end.
 
 %do_route(From, To, Packet) ->
@@ -614,15 +624,16 @@ do_route(From, To, Packet) ->
 %% and is processed if there is no active list set
 %% for the target session/resource to which a stanza is addressed,
 %% or if there are no current sessions for the user.
--spec is_privacy_allow(jid(), jid(), stanza()) -> boolean().
-is_privacy_allow(From, To, Packet) ->
+-spec is_privacy_allow(stanza()) -> boolean().
+is_privacy_allow(Packet) ->
+    To = xmpp:get_to(Packet),
     LServer = To#jid.server,
     allow == ejabberd_hooks:run_fold(
 	       privacy_check_packet, LServer, allow,
-	       [To, xmpp:set_from_to(Packet, From, To), in]).
+	       [To, Packet, in]).
 
--spec route_message(jid(), jid(), message(), message_type()) -> any().
-route_message(From, To, Packet, Type) ->
+-spec route_message(message()) -> any().
+route_message(#message{to = To, type = Type} = Packet) ->
     LUser = To#jid.luser,
     LServer = To#jid.lserver,
     PrioRes = get_user_present_resources(LUser, LServer),
@@ -646,7 +657,7 @@ route_message(From, To, Packet, Type) ->
 								   LResource,
 								   LMaxRes,
 								   P, MaxPrio),
-				      Pid ! {route, From, To, Packet1}
+				      ejabberd_c2s:route(Pid, {route, Packet1})
 				end;
 			    %% Ignore other priority:
 			    ({_Prio, _Res}) -> ok
@@ -654,14 +665,13 @@ route_message(From, To, Packet, Type) ->
 			PrioRes);
       _ ->
 	    case ejabberd_auth:is_user_exists(LUser, LServer) andalso
-		is_privacy_allow(From, To, Packet) of
+		is_privacy_allow(Packet) of
 		true ->
 		    ejabberd_hooks:run_fold(offline_message_hook,
-					    LServer, bounce,
-					    [From, To, Packet]);
+					    LServer, {bounce, Packet}, []);
 		false ->
 		    Err = xmpp:err_service_unavailable(),
-		    ejabberd_router:route_error(To, From, Packet, Err)
+		    ejabberd_router:route_error(Packet, Err)
 	    end
     end.
 
@@ -715,7 +725,7 @@ check_existing_resources(LUser, LServer, LResource) ->
 	   SIDs = [SID || #session{sid = SID} <- OnlineSs],
 	   MaxSID = lists:max(SIDs),
 	   lists:foreach(fun ({_, Pid} = S) when S /= MaxSID ->
-				 Pid ! replaced;
+				 ejabberd_c2s:route(Pid, replaced);
 			     (_) -> ok
 			 end,
 			 SIDs)
@@ -743,7 +753,7 @@ check_max_sessions(LUser, LServer) ->
     if length(OnlineSs) =< MaxSessions -> ok;
        true ->
 	    #session{sid = {_, Pid}} = lists:min(OnlineSs),
-	    Pid ! replaced
+	    ejabberd_c2s:route(Pid, replaced)
     end,
     if length(OfflineSs) =< MaxSessions -> ok;
        true ->
@@ -758,7 +768,7 @@ check_max_sessions(LUser, LServer) ->
 -spec get_max_user_sessions(binary(), binary()) -> infinity | non_neg_integer().
 get_max_user_sessions(LUser, Host) ->
     case acl:match_rule(Host, max_user_sessions,
-			jid:make(LUser, Host, <<"">>))
+			jid:make(LUser, Host))
 	of
       Max when is_integer(Max) -> Max;
       infinity -> infinity;
@@ -767,32 +777,28 @@ get_max_user_sessions(LUser, Host) ->
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
--spec process_iq(jid(), jid(), iq()) -> any().
-process_iq(From, To, #iq{type = T, lang = Lang, sub_els = [El]} = Packet)
+-spec process_iq(iq()) -> any().
+process_iq(#iq{to = To, type = T, lang = Lang, sub_els = [El]} = Packet)
   when T == get; T == set ->
     XMLNS = xmpp:get_ns(El),
     Host = To#jid.lserver,
     case ets:lookup(sm_iqtable, {Host, XMLNS}) of
-	[{_, Module, Function}] ->
-	    gen_iq_handler:handle(Host, Module, Function, no_queue,
-				  From, To, Packet);
 	[{_, Module, Function, Opts}] ->
-	    gen_iq_handler:handle(Host, Module, Function, Opts,
-				  From, To, Packet);
+	    gen_iq_handler:handle(Host, Module, Function, Opts, Packet);
 	[] ->
 	    Txt = <<"No module is handling this query">>,
 	    Err = xmpp:err_service_unavailable(Txt, Lang),
-	    ejabberd_router:route_error(To, From, Packet, Err)
+	    ejabberd_router:route_error(Packet, Err)
     end;
-process_iq(From, To, #iq{type = T, lang = Lang, sub_els = SubEls} = Packet)
+process_iq(#iq{type = T, lang = Lang, sub_els = SubEls} = Packet)
   when T == get; T == set ->
     Txt = case SubEls of
 	      [] -> <<"No child elements found">>;
 	      _ -> <<"Too many child elements">>
 	  end,
     Err = xmpp:err_bad_request(Txt, Lang),
-    ejabberd_router:route_error(To, From, Packet, Err);
-process_iq(_From, _To, #iq{}) ->
+    ejabberd_router:route_error(Packet, Err);
+process_iq(#iq{}) ->
     ok.
 
 -spec force_update_presence({binary(), binary()}) -> ok.
@@ -801,7 +807,7 @@ force_update_presence({LUser, LServer}) ->
     Mod = get_sm_backend(LServer),
     Ss = online(Mod:get_sessions(LUser, LServer)),
     lists:foreach(fun (#session{sid = {_, Pid}}) ->
-			  Pid ! force_update_presence
+			  ejabberd_c2s:route(Pid, force_update_presence)
 		  end,
 		  Ss).
 
@@ -881,7 +887,7 @@ kick_user(User, Server) ->
     lists:foreach(
 	fun(Resource) ->
 		PID = get_session_pid(User, Server, Resource),
-		PID ! kick
+		ejabberd_c2s:route(PID, kick)
 	end, Resources),
     length(Resources).
 

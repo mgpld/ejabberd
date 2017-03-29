@@ -41,7 +41,7 @@
          get_user_caps/2, import_start/2, import_stop/2]).
 
 %% gen_mod callbacks
--export([start/2, start_link/2, stop/1, depends/2]).
+-export([start/2, stop/1, reload/3, depends/2]).
 
 %% gen_server callbacks
 -export([init/1, handle_info/2, handle_call/3,
@@ -56,8 +56,6 @@
 -include("xmpp.hrl").
 -include("mod_caps.hrl").
 
--define(PROCNAME, ejabberd_mod_caps).
-
 -define(BAD_HASH_LIFETIME, 600).
 
 -record(state, {host = <<"">> :: binary()}).
@@ -69,22 +67,11 @@
 -callback caps_write(binary(), {binary(), binary()},
 		     non_neg_integer() | [binary()]) -> any().
 
-start_link(Host, Opts) ->
-    Proc = gen_mod:get_module_proc(Host, ?PROCNAME),
-    gen_server:start_link({local, Proc}, ?MODULE,
-			  [Host, Opts], []).
-
 start(Host, Opts) ->
-    Proc = gen_mod:get_module_proc(Host, ?PROCNAME),
-    ChildSpec = {Proc, {?MODULE, start_link, [Host, Opts]},
-		 transient, 1000, worker, [?MODULE]},
-    supervisor:start_child(ejabberd_sup, ChildSpec).
+    gen_mod:start_child(?MODULE, Host, Opts).
 
 stop(Host) ->
-    Proc = gen_mod:get_module_proc(Host, ?PROCNAME),
-    gen_server:call(Proc, stop),
-    supervisor:terminate_child(ejabberd_sup, Proc),
-    supervisor:delete_child(ejabberd_sup, Proc).
+    gen_mod:stop_child(?MODULE, Host).
 
 -spec get_features(binary(), nothing | caps()) -> [binary()].
 get_features(_Host, nothing) -> [];
@@ -251,7 +238,33 @@ c2s_presence_in(C2SState,
 depends(_Host, _Opts) ->
     [].
 
+reload(Host, NewOpts, OldOpts) ->
+    NewMod = gen_mod:db_mod(Host, NewOpts, ?MODULE),
+    OldMod = gen_mod:db_mod(Host, OldOpts, ?MODULE),
+    if OldMod /= NewMod ->
+	    NewMod:init(Host, NewOpts);
+       true ->
+	    ok
+    end,
+    case gen_mod:is_equal_opt(cache_size, NewOpts, OldOpts,
+			      fun(I) when is_integer(I), I>0 -> I end,
+                              1000) of
+	{false, MaxSize, _} ->
+	    cache_tab:setopts(caps_features, [{max_size, MaxSize}]);
+	true ->
+	    ok
+    end,
+    case gen_mod:is_equal_opt(cache_life_time, NewOpts, OldOpts,
+			      fun(I) when is_integer(I), I>0 -> I end,
+			      timer:hours(24) div 1000) of
+	{false, LifeTime, _} ->
+	    cache_tab:setopts(caps_features, [{life_time, LifeTime}]);
+	true ->
+	    ok
+    end.
+
 init([Host, Opts]) ->
+    process_flag(trap_exit, true),
     Mod = gen_mod:db_mod(Host, Opts, ?MODULE),
     Mod:init(Host, Opts),
     MaxSize = gen_mod:get_opt(cache_size, Opts,
@@ -328,6 +341,8 @@ feature_request(Host, From, Caps,
 			end,
 	  if NeedRequest ->
 		 IQ = #iq{type = get,
+			  from = jid:make(Host),
+			  to = From,
 			  sub_els = [#disco_info{node = <<Node/binary, "#",
 							  SubNode/binary>>}]},
 		 cache_tab:insert(caps_features, NodePair, now_ts(),
@@ -336,9 +351,7 @@ feature_request(Host, From, Caps,
 			     feature_response(IQReply, Host, From, Caps,
 					      SubNodes)
 		     end,
-		 ejabberd_local:route_iq(jid:make(<<"">>, Host,
-						       <<"">>),
-					 From, IQ, F);
+		 ejabberd_local:route_iq(IQ, F);
 	     true -> feature_request(Host, From, Caps, Tail)
 	  end
     end;
@@ -382,7 +395,7 @@ caps_write_fun(Host, Node, Features) ->
 
 -spec make_my_disco_hash(binary()) -> binary().
 make_my_disco_hash(Host) ->
-    JID = jid:make(<<"">>, Host, <<"">>),
+    JID = jid:make(Host),
     case {ejabberd_hooks:run_fold(disco_local_features,
 				  Host, empty, [JID, JID, <<"">>, <<"">>]),
 	  ejabberd_hooks:run_fold(disco_local_identity, Host, [],
@@ -409,11 +422,11 @@ make_disco_hash(DiscoInfo, Algo) ->
                              concat_features(DiscoInfo), concat_info(DiscoInfo)]),
     jlib:encode_base64(case Algo of
                            md5 -> erlang:md5(Concat);
-                           sha -> p1_sha:sha1(Concat);
-                           sha224 -> p1_sha:sha224(Concat);
-                           sha256 -> p1_sha:sha256(Concat);
-                           sha384 -> p1_sha:sha384(Concat);
-                           sha512 -> p1_sha:sha512(Concat)
+                           sha -> crypto:hash(sha, Concat);
+                           sha224 -> crypto:hash(sha224, Concat);
+                           sha256 -> crypto:hash(sha256, Concat);
+                           sha384 -> crypto:hash(sha384, Concat);
+                           sha512 -> crypto:hash(sha512, Concat)
                        end).
 
 -spec check_hash(caps(), disco_info()) -> boolean().

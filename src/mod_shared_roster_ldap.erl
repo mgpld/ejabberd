@@ -33,7 +33,7 @@
 -behaviour(gen_mod).
 
 %% API
--export([start_link/2, start/2, stop/1]).
+-export([start/2, stop/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2,
@@ -90,21 +90,11 @@
 %%====================================================================
 %% API
 %%====================================================================
-start_link(Host, Opts) ->
-    Proc = gen_mod:get_module_proc(Host, ?MODULE),
-    gen_server:start_link({local, Proc}, ?MODULE,
-			  [Host, Opts], []).
-
 start(Host, Opts) ->
-    Proc = gen_mod:get_module_proc(Host, ?MODULE),
-    ChildSpec = {Proc, {?MODULE, start_link, [Host, Opts]},
-		 permanent, 1000, worker, [?MODULE]},
-    supervisor:start_child(ejabberd_sup, ChildSpec).
+    gen_mod:start_child(?MODULE, Host, Opts).
 
 stop(Host) ->
-    Proc = gen_mod:get_module_proc(Host, ?MODULE),
-    supervisor:terminate_child(ejabberd_sup, Proc),
-    supervisor:delete_child(ejabberd_sup, Proc).
+    gen_mod:stop_child(?MODULE, Host).
 
 depends(_Host, _Opts) ->
     [{mod_roster, hard}].
@@ -123,10 +113,12 @@ get_user_roster(Items, {U, S} = US) ->
 						      case dict:find(US1,
 								     SRUsers1)
 							  of
-							{ok, _GroupNames} ->
+							{ok, GroupNames} ->
 							    {Item#roster{subscription
 									     =
 									     both,
+									 groups =
+									     Item#roster.groups ++ GroupNames,
 									 ask =
 									     none},
 							     dict:erase(US1,
@@ -237,6 +229,7 @@ process_subscription(Direction, User, Server, JID,
 %% gen_server callbacks
 %%====================================================================
 init([Host, Opts]) ->
+    process_flag(trap_exit, true),
     State = parse_options(Host, Opts),
     cache_tab:new(shared_roster_ldap_user,
 		  [{max_size, State#state.user_cache_size}, {lru, false},
