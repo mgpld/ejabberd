@@ -1348,9 +1348,9 @@ handle_info({async, SeqId, Result}, StateName, #state{aux_fields=Actions} = Stat
             NewActions = lists:keydelete(SeqId, 1, Actions),
             fsm_next_state(StateName, State#state{aux_fields=NewActions});
 
-        {error, _} = Error ->
+        {error, Reason} = Error ->
             ?ERROR_MSG(?MODULE_STRING "[~5w] Async: SeqId: ~p, Error: ~p", [ ?LINE, SeqId, Error ]),
-            Packet = make_error(enoent, SeqId, undefined, undefined),
+            Packet = make_error(Reason, SeqId, undefined, undefined),
             send_element(State, Packet),
             NewActions = lists:keydelete(SeqId, 1, Actions),
             fsm_next_state(StateName, State#state{aux_fields=NewActions});
