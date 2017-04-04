@@ -149,6 +149,12 @@
 -define(OPERATION_SEARCH_NEW, 110).
 -define(OPERATION_SEARCH_QUERY, 111).
 
+-define(TRACK_INFO, 120).
+-define(TRACK_RECORD, 121).
+-define(TRACK_GET, 122).
+-define(TRACK_RESET, 123).
+-define(TRACK_TOTAL, 124).
+
 -define(GENERIC_EXPLORE, 12).
 
 %% roles
@@ -343,7 +349,8 @@ session_established({login, SeqId, Args}, StateData) ->
     Info = [{ip, StateData#state.ip}, {conn, Conn},
         {auth_module, StateData#state.auth_module}],
 
-    ?DEBUG(?MODULE_STRING " [LOGIN (~p/~p)] Id: ~p\nServer: ~s\nUser: ~s\nResource: ~s\nJid: ~p", [ 
+    ?DEBUG(?MODULE_STRING "[~5w] [LOGIN (~p/~p)] Id: ~p\nServer: ~s\nUser: ~s\nResource: ~s\nJid: ~p", [ 
+        ?LINE,
         seqid(),
         SeqId,
         Id, 
@@ -916,37 +923,15 @@ authorized({action, SeqId, Args}, StateData) when is_list(Args) ->
                     fsm_next_state(authorized, NewState)
             end;
 
-        <<"post">> -> % post destinations are 'thread's
-            case fxml:get_attr_s(<<"to">>, Args) of
+        <<"track">> = Type ->
+            case fxml:get_attr_s(<<"operation">>, Args) of
                 <<>> ->
                     fsm_next_state(authorized, StateData);
 
-                To ->
-           %          handle_post(To, SeqId, Args, StateData),
-           %          fsm_next_state(authorized, StateData)
-           %  end;
-                    % Split between internals and public properties
-                    AllProperties = fxml:get_attr_s(<<"properties">>, Args),
-                    { PvProperties, PbProperties } = extract_message_options( AllProperties ),
-
-                    Data = fxml:get_attr_s(<<"data">>, Args),
-                    Content = fxml:get_attr_s(<<"content">>, Args),
-                    From = jlib:jid_to_string(StateData#state.jid),
-                    Json = [{<<"type">>,<<"reaction">>},
-                            {<<"from">>, [
-                                {<<"id">>, StateData#state.userid},
-                                {<<"username">>, StateData#state.user}]},
-                            {<<"threadid">>, To},
-                            {<<"content">>, Content},
-                            {<<"data">>, Data},
-                            {<<"properties">>, PbProperties}],
-                    
-                    #jid{luser=_User, lserver=Host} = StateData#state.jid,
-                    ?DEBUG(?MODULE_STRING " post: sending message with options: ~p\n~p", [ PvProperties, Json ]),
-                    mod_chat:route(Host, To, From, message, [Json, PvProperties]),
-
-                    fsm_next_state(authorized, StateData)
-                end;
+                Operation ->
+                    NewState = handle(Type, Operation, SeqId, Args, StateData),
+                    fsm_next_state(authorized, NewState)
+            end;
 
         <<"search">> ->
             case fxml:get_attr_s(<<"operation">>, Args) of
@@ -1050,64 +1035,64 @@ authorized({invite, _SeqId, Args}, StateData) ->
         <<>> ->
             fsm_next_state(authorized, StateData);
 
-        DiscussionId ->
-            case fxml:get_attr_s(<<"id">>, Args) of
-                <<>> ->
-                    fsm_next_state(authorized, StateData);
+            DiscussionId ->
+                case fxml:get_attr_s(<<"id">>, Args) of
+                    <<>> ->
+                        fsm_next_state(authorized, StateData);
 
-                Id -> 
-                    ToJid = jlib:string_to_jid(Id),
-                    From = StateData#state.jid,
-                    %User = StateData#state.user,
-                    Jid = jlib:jid_to_string(From),
-                    Json = {struct,[{<<"message">>,
-                      {struct,[{<<"type">>,<<"invite-on-discussion">>},
-                           {<<"from">>, {struct,[
-                                {<<"userid">>, StateData#state.userid},
-                                {<<"username">>, StateData#state.user}]}},
-                           {<<"discussionid">>, DiscussionId}]}}]},
+                    Id -> 
+                        ToJid = jlib:string_to_jid(Id),
+                        From = StateData#state.jid,
+                        %User = StateData#state.user,
+                        Jid = jlib:jid_to_string(From),
+                        Json = {struct,[{<<"message">>,
+                          {struct,[{<<"type">>,<<"invite-on-discussion">>},
+                               {<<"from">>, {struct,[
+                                    {<<"userid">>, StateData#state.userid},
+                                    {<<"username">>, StateData#state.user}]}},
+                               {<<"discussionid">>, DiscussionId}]}}]},
 
-                    % VIC We add the user neverless he accepts or denies...
-                    #jid{server=Host} = From,
-                    ?DEBUG(?MODULE_STRING " Adding user: ~p to DiscussionId: ~p", [ Id, DiscussionId ]),
-                    %mod_chat:route(Host, DiscussionId, Jid, add, [ToJid]),
-                    mod_chat:route(Host, DiscussionId, Jid, add, [Id]),
+                        % VIC We add the user neverless he accepts or denies...
+                        #jid{server=Host} = From,
+                        ?DEBUG(?MODULE_STRING " Adding user: ~p to DiscussionId: ~p", [ Id, DiscussionId ]),
+                        %mod_chat:route(Host, DiscussionId, Jid, add, [ToJid]),
+                        mod_chat:route(Host, DiscussionId, Jid, add, [Id]),
 
-                    #jid{user=ToUser,server=ToServer} = ToJid,
-                    case get_user_pids(ToUser, ToServer) of
-                        [] ->
-                            %User is no longer connected.
-                            ?DEBUG(?MODULE_STRING "[~5w] User is not available: ~p@~p", [ ?LINE, ToUser, ToServer ]),
-                            fsm_next_state(authorized, StateData);
+                        #jid{user=ToUser,server=ToServer} = ToJid,
+                        case get_user_pids(ToUser, ToServer) of
+                            [] ->
+                                %User is no longer connected.
+                                ?DEBUG(?MODULE_STRING "[~5w] User is not available: ~p@~p", [ ?LINE, ToUser, ToServer ]),
+                                fsm_next_state(authorized, StateData);
 
-                        Sessions ->
-                            
-                            ?DEBUG(?MODULE_STRING " Sessions: ~p", [ Sessions ]),
-                            % Sending to the user the message invite-on-discussion
-                            % using direct messaging
-                            Body = (Json),
-                            lists:foreach( fun( Pid ) ->   
-                                Pid ! {route, self(), Pid, Body}
-                            end, Sessions),
+                            Sessions ->
+                                
+                                ?DEBUG(?MODULE_STRING " Sessions: ~p", [ Sessions ]),
+                                % Sending to the user the message invite-on-discussion
+                                % using direct messaging
+                                Body = (Json),
+                                lists:foreach( fun( Pid ) ->   
+                                    Pid ! {route, self(), Pid, Body}
+                                end, Sessions),
 
-                            % Sending to all rooms participants that a new user 
-                            % is waiting to join them
-                            Json2 = 
-                            {struct,[
-                                {<<"message">>, {struct,[
-                                {<<"type">>, <<"discussion-presence">>},
-                                {<<"action">>, <<"waiting">>},
-                                {<<"from">>, {struct,[
-                                    {<<"id">>, Id}]}},
-                                {<<"discussionid">>, DiscussionId}]}}]},
+                                % Sending to all rooms participants that a new user 
+                                % is waiting to join them
+                                Json2 = 
+                                {struct,[
+                                    {<<"message">>, {struct,[
+                                    {<<"type">>, <<"discussion-presence">>},
+                                    {<<"action">>, <<"waiting">>},
+                                    {<<"from">>, {struct,[
+                                        {<<"id">>, Id}]}},
+                                    {<<"discussionid">>, DiscussionId}]}}]},
 
-                            #jid{luser=_User, lserver=Host} = StateData#state.jid,
-                            mod_chat:route(Host, DiscussionId, Id, message, [ Json2 ]),
+                                #jid{luser=_User, lserver=Host} = StateData#state.jid,
+                                mod_chat:route(Host, DiscussionId, Id, message, [ Json2 ]),
 
-                            fsm_next_state(authorized, StateData)
-                end
-        end
-end;
+                                fsm_next_state(authorized, StateData)
+                    end
+            end
+    end;
 
 authorized({Command, SeqId, Args}, StateData) ->
     ?ERROR_MSG(?MODULE_STRING "[~5w] UNHANDLED: Command: ~p, Args: ~p", [?LINE, Command, Args ]),
@@ -1354,6 +1339,33 @@ handle_info({db, SeqId, Result}, StateName, #state{aux_fields=Actions} = State) 
             end
     end;
 
+handle_info({async, SeqId, Result}, StateName, #state{aux_fields=Actions} = State) ->
+    case Result of 
+        [<<>>] ->
+            ?DEBUG(?MODULE_STRING "[~5w] Async: SeqId: ~p, Empty: '~p'", [ ?LINE, SeqId, <<>> ]),
+            Packet = make_result(SeqId, <<>>),
+            send_element(State, Packet),
+            NewActions = lists:keydelete(SeqId, 1, Actions),
+            fsm_next_state(StateName, State#state{aux_fields=NewActions});
+
+        {error, _} = Error ->
+            ?ERROR_MSG(?MODULE_STRING "[~5w] Async: SeqId: ~p, Error: ~p", [ ?LINE, SeqId, Error ]),
+            Packet = make_error(enoent, SeqId, undefined, undefined),
+            send_element(State, Packet),
+            NewActions = lists:keydelete(SeqId, 1, Actions),
+            fsm_next_state(StateName, State#state{aux_fields=NewActions});
+
+        {ok, Response} ->  
+            ?DEBUG(?MODULE_STRING "[~5w] Async: SeqId: ~p, Result: '~p'", [ ?LINE, SeqId, Response ]),
+            case lists:keysearch(SeqId, 1, Actions) of
+                {value, {_, [ _Element, _Operation, _Params]}} ->
+                    Packet = make_result(SeqId, Response),
+                    send_element(State, Packet),
+                    NewActions = lists:keydelete(SeqId, 1, Actions),
+                    fsm_next_state(StateName, State#state{aux_fields=NewActions})
+            end
+    end;
+
 %handle_info({force_update_presence, LUser}, StateName,
 %            #state{user = LUser, server = LServer} = StateData) ->
 %    NewStateData =
@@ -1498,12 +1510,10 @@ send_text(StateData, Text) ->
     Module = StateData#state.sockmod,
     Socket = StateData#state.socket,
 
-    %?DEBUG(?MODULE_STRING " [~s (~p|~p)] Send DATA\n\n", [ StateData#state.user, seqid(), StateData#state.sid ]),
-    %?DEBUG("   ~s \n\n", [ Text ]),
-    %?DEBUG("   ~p \n\n", [ Text ]),
+    ?DEBUG(?MODULE_STRING "[~5w] -> Sending DATA (~p) to ~s\n", [ ?LINE, seqid(), StateData#state.user ]),
+    % ?DEBUG("   ~p\n\n", [ Text ]),
 
     Module:send(Socket, Text).
-    %(StateData#state.sockmod):send(StateData#state.socket, Text).
 
 send_element(StateData, Element) ->
     seqid(1),   % increment
@@ -3635,7 +3645,6 @@ do_admin(?OPERATION_STOREPROFILE = Op, User, SeqId, Args, State) ->
             false
     end;
 
-
 do_admin(_Operation, _User, _SeqId, _Args, _State) ->
     ?DEBUG(?MODULE_STRING "[~5w] DEFAULT: do_admin ~p: Operation: ~p, on User: ~p, Seq: ~p, Args: ~p", [ ?LINE, _User, _Operation, _SeqId, _Args ]),
     ok.
@@ -3653,6 +3662,77 @@ admin(#state{userid=Userid} = _State, Operation, User, Args) ->
     ?DEBUG(?MODULE_STRING "[~5w] DEFAULT: admin ~p: Operation: ~p, on User: ~p, Args: ~p", [ ?LINE, Userid, Operation, User, Args ]),
     {error, enoent}.
 
+
+track_operations(<<"info">>) -> ?TRACK_INFO;
+track_operations(<<"record">>) -> ?TRACK_RECORD;
+track_operations(<<"get">>) -> ?TRACK_GET;
+track_operations(<<"reset">>) -> ?TRACK_RESET;
+track_operations(<<"total">>) -> ?TRACK_TOTAL;
+track_operations(_) -> false.
+
+do_track(?TRACK_INFO, User, SeqId, Args, State) ->
+    case args(Args, [<<"id">>, <<"data">>]) of
+        [ _Id, {struct, _Data} ] = Params ->
+            hyd_track:info(User, SeqId, Params);
+
+        _Wrong ->
+            ?ERROR_MSG(?MODULE_STRING ".~p do_track info: extracted: ~p", [ ?LINE, _Wrong ]),
+            Answer = make_error(SeqId, 406, <<"bad arguments">>),
+            send_element(State, Answer),
+            false
+    end;
+
+do_track(?TRACK_RECORD, User, SeqId, Args, State) ->
+    case args(Args, [<<"id">>, <<"answer">>]) of
+        [ _Id, {struct, _Data} ] = Params ->
+            hyd_track:record(User, SeqId, Params);
+
+        _Wrong ->
+            ?ERROR_MSG(?MODULE_STRING ".~p do_track record: extracted: ~p", [ ?LINE, _Wrong ]),
+            Answer = make_error(SeqId, 406, <<"bad arguments">>),
+            send_element(State, Answer),
+            false
+    end;
+
+do_track(?TRACK_GET, User, SeqId, Args, State) ->
+    case args(Args, [<<"id">>, <<"institution">>]) of
+        [ _Id, _Institution ] = Params ->
+            hyd_track:get(User, SeqId, Params);
+
+        _Wrong ->
+            ?ERROR_MSG(?MODULE_STRING ".~p do_track get: extracted: ~p", [ ?LINE, _Wrong ]),
+            Answer = make_error(SeqId, 406, <<"bad arguments">>),
+            send_element(State, Answer),
+            false
+    end;
+
+do_track(?TRACK_RESET, User, SeqId, Args, State) ->
+    case args(Args, [<<"id">>, <<"data">>]) of
+        [ _Id, {struct, _Data }] = Params ->
+            hyd_track:reset(User, SeqId, Params);
+
+        _Wrong ->
+            ?ERROR_MSG(?MODULE_STRING ".~p do_track: extracted: ~p", [ ?LINE, _Wrong ]),
+            Answer = make_error(SeqId, 406, <<"bad arguments">>),
+            send_element(State, Answer),
+            false
+    end;
+
+do_track(?TRACK_TOTAL, User, SeqId, Args, State) ->
+    case args(Args, [<<"id">>, <<"total">>]) of
+        [ _Id, _Total ] = Params ->
+            hyd_track:total(User, SeqId, Params);
+
+        _Wrong ->
+            ?ERROR_MSG(?MODULE_STRING ".~p do_track: extracted: ~p", [ ?LINE, _Wrong ]),
+            Answer = make_error(SeqId, 406, <<"bad arguments">>),
+            send_element(State, Answer),
+            false
+    end;
+
+do_track(_Operation, _User, _SeqId, _Args, State) ->
+    ?DEBUG(?MODULE_STRING "[~5w] DEFAULT: do_track ~p: Operation: ~p, on User: ~p, Seq: ~p, Args: ~p", [ ?LINE, _User, _Operation, _SeqId, _Args ]),
+    State.
 
 %%
 %% Handle_action 
@@ -3677,43 +3757,6 @@ handle_action(Operation, SeqId, Args, State) ->
                     Actions = State#state.aux_fields,
                     State#state{aux_fields=[{SeqId, [ Element, Operation, [] ]} | Actions ]};
 
-%%                     case data(State, hyd_fqids, action, [ Element, Operation, [ State#state.userid ]]) of
-%%                         {error, Reason} ->
-%%                             Answer = make_error(Reason, SeqId, 500, <<"error action">>),
-%%                             send_element(State, Answer),
-%%                             State;
-%% 
-%%                         {ok, []} ->
-%%                             Answer = make_answer_not_found(SeqId),
-%%                             send_element(State, Answer),
-%%                             State;
-%% 
-%%                         {ok, true} ->
-%%                             Answer = make_answer(SeqId, 200, [
-%%                                 {<<"result">>, <<"true">>}
-%%                             ]),
-%%                             send_element(State, Answer),
-%%                             State;
-%% 
-%%                         {ok, false} ->
-%%                             Answer = make_answer(SeqId, 200, [
-%%                                 {<<"result">>, <<"false">>}
-%%                             ]),
-%%                             send_element(State, Answer),
-%%                             State;
-%% 
-%%                         {ok, {Infos, Response}} ->
-%%                             Answer = make_result(SeqId, Response),
-%%                             send_element(State, Answer),
-%%                             action_trigger(State, Element, Infos, Operation, [], Response),
-%%                             State;
-%% 
-%%                         % DEPRECATED
-%%                         {ok, Response} ->
-%%                             Answer = make_result(SeqId, Response),
-%%                             send_element(State, Answer),
-%%                             State
-%%                    end;
 
                 {ok, ActionArgs} ->
                     Params = action_args(Args, ActionArgs),
@@ -4750,6 +4793,21 @@ handle(<<"admin">> = Type, Operation, SeqId, Args, #state{ sasl_state = Level } 
             #jid{luser=User} = State#state.jid,
             Response = do_admin(OperationId, User, SeqId, Args, State),
             handle_operation(Type, SeqId, Response, State)
+    end;    
+
+handle(<<"track">> = Type,  Operation, SeqId, Args, #state{} = State) ->
+    case track_operations(Operation) of
+        false ->
+            ?DEBUG(?MODULE_STRING "[~5w] handle_~s Track (default): Operation: ~p, Args: ~p", [ ?LINE, Type, Operation, Args ]),
+            Answer = make_error(SeqId, 404, <<"unknown call ">>),
+            send_element(State, Answer),
+            State;
+
+        OperationId ->
+            #jid{luser=User} = State#state.jid,
+            _Response = do_track(OperationId, User, SeqId, Args, State), % asynchronous call
+            Actions = State#state.aux_fields,
+            State#state{aux_fields=[{SeqId, [ Type, Operation, Args ]} | Actions ]}
     end;    
 
 handle(Type, Operation, SeqId, Args, State) ->

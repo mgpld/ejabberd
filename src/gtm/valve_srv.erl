@@ -89,11 +89,11 @@ poll( Pid ) ->
     do_poll(Pid, fun(X) -> X end, 3).
 
 poll( Pid, Fun) ->
-    ?DEBUG(?MODULE_STRING ".~p ~p start (instance 3)\n", [ ?LINE, self() ]),
+    %?DEBUG(?MODULE_STRING ".~p ~p start (instance 3)\n", [ ?LINE, self() ]),
     do_poll( Pid, Fun, 3).
 
 do_poll(_Pid, _, 0) ->
-    ?DEBUG(?MODULE_STRING ".~p ~p end (instance 0)\n", [ ?LINE, self() ]),
+    %?DEBUG(?MODULE_STRING ".~p ~p end (instance 0)\n", [ ?LINE, self() ]),
     ok;
 do_poll(Pid, Fun, Count) ->
     case gen_server:call( Pid, poll, infinity ) of
@@ -101,13 +101,13 @@ do_poll(Pid, Fun, Count) ->
             ?DEBUG(?MODULE_STRING ".~p ~p ** will handle : ~p instance ~p.\n", [ ?LINE, self(), _Args, Count ]),
             case expired(Date, Timeout) of
                 false -> 
-                    ?DEBUG("(~p) Handle query ~p for client ~p : ~p\n", [ self(), Operation, Client, calendar:now_to_local_time(Date) ]),
+                    %?DEBUG("(~p) Handle query ~p for client ~p : ~p\n", [ self(), Operation, Client, calendar:now_to_local_time(Date) ]),
                     Result = Fun( Operation ),
                     gen_server:reply( Client, Result),
                     do_poll(Pid, Fun, Count - 1);
 
                 true ->
-                    ?DEBUG("(~p) Drop query ~p for client ~p because of expiration, try another\n", [ self(), Operation, Client ]),
+                    %?DEBUG("(~p) Drop query ~p for client ~p because of expiration, try another\n", [ self(), Operation, Client ]),
                     do_poll(Pid, Fun, Count  - 1)
             end;
 
@@ -171,7 +171,7 @@ handle_call(Query, From, State) when is_tuple(Query) ->
     handle_call({ Query, 5000 }, From, State);
 
 handle_call(_Query, _Node, State) ->
-    ?DEBUG("Catchall: ~p\n", [ _Query ]),
+    ?DEBUG(?MODULE_STRING ".~p Catchall: ~p\n", [ ?LINE, _Query ]),
     {reply, undefined, State}.
 
 % Callback Casts
@@ -207,7 +207,7 @@ code_change(_, State, _Vsn) ->
 % internals
 % give some work to the caller
 answer(Pid, Query, Client) ->
-    ?DEBUG(?MODULE_STRING ".~p (~p) Sending work to worker ~p: query: ~p for client ~p\n",  [ ?LINE, self(), Pid, Query, Client ]),
+    %?DEBUG(?MODULE_STRING ".~p (~p) Sending work to worker ~p: query: ~p for client ~p\n",  [ ?LINE, self(), Pid, Query, Client ]),
     gen_server:reply( Pid, {ok, {Query, Client}}).
 
 -ifdef(DEBUG).

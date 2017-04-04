@@ -1,11 +1,11 @@
 -module(hyd_users).
 % Created hyd_users.erl the 17:16:36 (12/10/2013) on core
-% Last Modification of hyd_users.erl at 12:41:01 (21/11/2016) on core
+% Last Modification of hyd_users.erl at 09:56:55 (04/04/2017) on core
 %
 % Author: rolph
 % Harmony Data - Users
 
--define(debug, true).
+%-define(debug, true).
 
 -ifdef(debug).
 -define(DEBUG(Format, Args),

@@ -250,7 +250,7 @@ handle_cast({become_controller, C2SPid}, State) ->
 	{noreply, NSt};
 
 handle_cast({recv, Data}, #state{ conn=C } = State) ->
-    ?DEBUG(?MODULE_STRING "[~5w] Received from: ~p\n~s\n", [ ?LINE, C, Data]),
+    ?DEBUG(?MODULE_STRING "[~5w] <- Received DATA from: ~p\n\n~s\n\n", [ ?LINE, C, Data]),
     case sockjs_json:decode(Data) of
         {ok, Decoded} ->
             handle_data( Decoded, State ),
@@ -262,6 +262,7 @@ handle_cast({recv, Data}, #state{ conn=C } = State) ->
 
 handle_cast({send, Out}, #state{conn=Connection} = State) ->
     Json = sockjs_json:encode(Out),
+    ?DEBUG(?MODULE_STRING "[~5w] -> Sending DATA to ~p\n\n~s\n\n", [ ?LINE, Connection, Json ]),
     sockjs_session:send(Json, Connection),
     {noreply, State};
 
@@ -409,7 +410,7 @@ handle_data( Data, #state{c2s_pid=Client,conn=Conn} = _State ) ->
             ok;
 	    
         Event ->
-            ?DEBUG(?MODULE_STRING "[~5w] Sending: ~p to ~p", [ ?LINE, Event, Client ]),
+            ?DEBUG(?MODULE_STRING "[~5w] Handling: ~p to ~p", [ ?LINE, Event, Client ]),
             catch gen_fsm:send_event(Client, Event)
     end.
 
