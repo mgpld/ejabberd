@@ -3979,24 +3979,23 @@ handle_message({game, eof}, From, _To, State) ->
     {ok, Packet};
     
 handle_message({chat, {Msgid, Message}}, #jid{user=Ref} = _From, _To, State) ->
-    Data = [{<<"message">>, [
+    Packet = [{<<"message">>, [
                 {<<"type">>,<<"chat">>},
                 {<<"from">>, Ref}, 
                 to(State),
                 {<<"msgid">>, Msgid },
                 {<<"data">>, Message}
             ]}],
-    Packet = (Data),
     {ok, Packet};
 
-handle_message({notification, {Msgid, Message}}, _From, _To, State) ->
-    Data = [{<<"message">>, [
+handle_message({notification, {Msgid, Message}}, #jid{user=Ref} = _From, _To, State) ->
+    Packet = [{<<"message">>, [
                 {<<"type">>,<<"notification">>},
+                {<<"from">>, Ref}, 
                 to(State),
                 {<<"msgid">>, Msgid },
                 {<<"data">>, Message}
             ]}],
-    Packet = (Data),
     {ok, Packet};
 
 % the message Child must be deleted
@@ -4426,26 +4425,26 @@ validsize(_) ->
 	    
 % Split from private and public properties
 % Private properties are for internal use only
--spec extract_message_options(
-    AllProperties :: list()|binary()|{struct, list()} ) -> {list(), list()}.
-
-extract_message_options( <<>> ) -> 
-    {[], []};
-extract_message_options( {struct, AllProperties} ) ->
-    extract_message_options( AllProperties, [], []).
-
-extract_message_options( [{<<"expire">>, _Value} = K | Properties], Private, Public) ->
-    extract_message_options( Properties, [ K | Private ], Public);
-extract_message_options( [{<<"views">>, _Value} = K | Properties], Private, Public) ->
-    extract_message_options( Properties, [ K | Private ], Public);
-extract_message_options( [{<<"closed">>, _Value} = K | Properties], Private, Public) ->
-    extract_message_options( Properties, [ K | Private ], Public);
-
-extract_message_options( [{ _, _} = K | Properties], Private, Public) ->
-    extract_message_options( Properties, Private, [ K | Public ]);
-
-extract_message_options( [], Private, Public) ->
-    {Private, Public}.
+%% -spec extract_message_options(
+%%     AllProperties :: list()|binary()|{struct, list()} ) -> {list(), list()}.
+%% 
+%% extract_message_options( <<>> ) -> 
+%%     {[], []};
+%% extract_message_options( {struct, AllProperties} ) ->
+%%     extract_message_options( AllProperties, [], []).
+%% 
+%% extract_message_options( [{<<"expire">>, _Value} = K | Properties], Private, Public) ->
+%%     extract_message_options( Properties, [ K | Private ], Public);
+%% extract_message_options( [{<<"views">>, _Value} = K | Properties], Private, Public) ->
+%%     extract_message_options( Properties, [ K | Private ], Public);
+%% extract_message_options( [{<<"closed">>, _Value} = K | Properties], Private, Public) ->
+%%     extract_message_options( Properties, [ K | Private ], Public);
+%% 
+%% extract_message_options( [{ _, _} = K | Properties], Private, Public) ->
+%%     extract_message_options( Properties, Private, [ K | Public ]);
+%% 
+%% extract_message_options( [], Private, Public) ->
+%%     {Private, Public}.
 
 %to_binary( Value ) ->
 %    list_to_binary( integer_to_list( Value )).
@@ -4935,21 +4934,21 @@ handle_query(Operation, SeqId, Args, State) ->
             State
     end.
 
-send_message( #state{server=Server} = State, Contacts, Message) when is_list(Contacts) ->
-    lists:foreach(fun(Contact) ->
-        case get_user_pids(Contact,Server) of
-            [] ->
-                ok;
-
-            Pids ->
-                ?DEBUG(?MODULE_STRING " [~s]: send_message '~p' to ~s@~s's pids: ~p", [
-                    State#state.user,
-                    Message, Contact, Server, Pids ]),
-
-                lists:foreach(fun(Pid) ->
-                    Pid ! {status, State#state.userid, State#state.user, Message}
-                end, Pids)
-
-           end end, Contacts);
-send_message( State, Contact, Message) ->
-    send_message( State, [Contact], Message).
+%% send_message( #state{server=Server} = State, Contacts, Message) when is_list(Contacts) ->
+%%     lists:foreach(fun(Contact) ->
+%%         case get_user_pids(Contact,Server) of
+%%             [] ->
+%%                 ok;
+%% 
+%%             Pids ->
+%%                 ?DEBUG(?MODULE_STRING " [~s]: send_message '~p' to ~s@~s's pids: ~p", [
+%%                     State#state.user,
+%%                     Message, Contact, Server, Pids ]),
+%% 
+%%                 lists:foreach(fun(Pid) ->
+%%                     Pid ! {status, State#state.userid, State#state.user, Message}
+%%                 end, Pids)
+%% 
+%%            end end, Contacts);
+%% send_message( State, Contact, Message) ->
+%%     send_message( State, [Contact], Message).

@@ -1,6 +1,6 @@
 -module(hyd_fqids).
 % Created hyd_fqids.erl the 02:14:53 (06/02/2014) on core
-% Last Modification of hyd_fqids.erl at 07:37:40 (13/02/2017) on core
+% Last Modification of hyd_fqids.erl at 11:34:12 (06/04/2017) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -336,6 +336,8 @@ valid(read) ->
 valid(Value) when is_list(Value) ->
     correct(Value);
 valid(Value) when is_integer(Value) ->
+    true;
+valid(<<>>) -> 
     true;
 valid(Value) ->
     ?DEBUG(?MODULE_STRING ".~p valid: Value: ~p", [ ?LINE, Value ]),

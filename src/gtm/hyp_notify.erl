@@ -1,6 +1,6 @@
 -module(hyp_notify).
 % Created hyp_notify.erl the 08:34:29 (03/09/2016) on core
-% Last Modification of hyp_notify.erl at 07:41:55 (13/02/2017) on core
+% Last Modification of hyp_notify.erl at 12:18:00 (06/04/2017) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 

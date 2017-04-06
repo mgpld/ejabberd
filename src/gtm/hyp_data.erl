@@ -1,6 +1,6 @@
 -module(hyp_data).
 % Created hyp_data.erl the 18:00:15 (27/05/2015) on core
-% Last Modification of hyp_data.erl at 15:13:05 (08/02/2016) on sd-19230
+% Last Modification of hyp_data.erl at 12:16:57 (06/04/2017) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -44,8 +44,18 @@ execute( Module, Function, Args) ->
 
     end.
 
+-spec extract( 
+    Path :: list(),
+    Props :: list({binary(), binary()})) -> binary() | <<>>.
+
 extract(Path, Props) ->
-    do_get(Path, Props, undefined).
+    do_get(Path, Props, <<>>).
+
+-spec do_get( 
+    Path :: list(),
+    Props :: list({binary(), binary()}),
+    Default :: term() ) -> binary() | term().
+
 
 do_get([], Value, _) ->
     Value;
