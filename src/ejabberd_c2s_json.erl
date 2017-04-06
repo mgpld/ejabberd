@@ -4490,6 +4490,44 @@ seqid(Inc) ->
 % sending an invitation to someone to connect
 % create the notification in the destination userid 
 %send_notification(#state{userid=Userid} = State, Extra, <<"invite">> = Class, <<"invitation">> = Source, Destination, Token, Title, Content ) ->
+send_notification(#state{userid=Userid} = State, Extra, <<"delete">> = Class, <<"contact">> = Source, Destination, Token, Title, Content ) ->
+    ExtraArgs = args(Extra, [<<"extra">>]), % theses extra args are NOT written in the db
+    Args = [ Userid, Class, Source, Destination, Token, Title, Content ],
+
+    ?DEBUG(?MODULE_STRING "[~5w] send_notification class: ~p source: ~p args ~p", [ ?LINE, Args, Class, Source ]),
+    case hyd_fqids:action(<<"notification">>, <<"create">>, Args) of % synchronous
+        {error, Reason} -> 
+            ?ERROR_MSG(?MODULE_STRING "[~5w] send_notification ~s.~s: error: ~p", [ ?LINE, Class, Source, Reason ]);
+        
+        NotificationId ->
+            ?DEBUG(?MODULE_STRING "[~5w] send_notification: id: ~p", [ ?LINE, NotificationId ]),
+            case get_user_pids(Destination, State#state.server) of
+                [] ->
+                    ?DEBUG(?MODULE_STRING "[~5w] send_notification id: ~p user ~p is offline, done.", [ ?LINE, NotificationId, Destination ]),
+                    ok;
+
+                Pids ->
+                    ?DEBUG(?MODULE_STRING "[~5w] send_notification id: ~p Sending to ~p, pids are: ~p", [ ?LINE, NotificationId, Destination, Pids ]),
+                    Packet = [{<<"message">>, [
+                        {<<"type">>,<<"notification">>},
+                        {<<"from">>, [
+                            {<<"username">>, State#state.user},
+                            {<<"id">>, State#state.userid}]},
+                        {<<"class">>, Class},
+                        {<<"id">>, NotificationId },
+                        {<<"source">>, Source},
+                        {<<"bundle">>, Token},
+                        {<<"extra">>, ExtraArgs},
+                        {<<"header">>, Title},
+                        {<<"text">>, Content},
+                        {<<"persistent">>, <<"false">>}
+                    ]}],
+                    Me = self(),
+                    lists:foreach( fun( Pid ) ->   
+                        Pid ! {route, Me, Pid, {plain, Packet}}
+                    end, Pids)
+            end
+    end;
 send_notification(#state{userid=Userid} = State, Extra, Class, Source, Destination, Token, Title, Content ) ->
     ExtraArgs = args(Extra, [<<"extra">>]), % theses extra args are NOT written in the db
     Args = [ Userid, Class, Source, Destination, Token, Title, Content ],
