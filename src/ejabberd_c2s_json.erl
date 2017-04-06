@@ -4658,6 +4658,9 @@ action_trigger(State, Element, Infos, Action, Args, Result) ->
 
 action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, Element, Type, <<"addRead">>, [Parent], _Result) when 
     Type =:= <<"message">>;
+    Type =:= <<"audio">>;
+    Type =:= <<"video">>;
+    Type =:= <<"document">>;
     Type =:= <<"photo">> ->
 
     ?DEBUG(?MODULE_STRING "[~5w] [~s] action ~p ~p:~p(~p): ~p", [ ?LINE, _Username, Element, Type, "addRead", [Parent], _Result ]),
@@ -4697,6 +4700,7 @@ action(#state{user=_Username, sid=_Sid, userid=Userid, server=Host} = _State, El
     mod_chat:route(Host, Element, Userid, del, Userid);
 
 action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, Element, Type, <<"delChild">>, [Child], _) when 
+    Type =:= <<"conversationgroup">>;
     Type =:= <<"group">>;
     Type =:= <<"thread">> ->
 
