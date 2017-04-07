@@ -1,18 +1,11 @@
 -module(hyd_users).
 % Created hyd_users.erl the 17:16:36 (12/10/2013) on core
-% Last Modification of hyd_users.erl at 09:56:55 (04/04/2017) on core
+% Last Modification of hyd_users.erl at 07:24:27 (07/04/2017) on core
 %
 % Author: rolph
 % Harmony Data - Users
 
 %-define(debug, true).
-
--ifdef(debug).
--define(DEBUG(Format, Args),
-  io:format(Format ++ " | ~w.~w\n",  Args ++ [?MODULE, ?LINE])).
--else.
--define(DEBUG(Format, Args), true).
--endif.
 
 -export([
     all/2,
@@ -173,6 +166,8 @@
     session_new/4,
     session_init/2
 ]).
+
+-include("logger.hrl").
 
 -define(ROOT_USER, "^users").
 -define(USER_MODULE, <<"users">>).
@@ -602,13 +597,20 @@ contacts_info_from_category(Userid, Category) ->
         [true] ->
             [];
 
+        {error, Reason} ->
+            ?ERROR_MSG(" retrieval error from userid ~p for category: ~p: ~p", [ Userid, Category, Reason ]),
+            [];
+
         Contacts ->
-            %?DEBUG("contacts_info_from_category: Userid: ~p, Category: ~p\n~p", [ Userid, Category, Contacts ]),
             lists:foldl(fun(Contact, Result) ->
-                %case contact_info(Userid, Contact, Category, <<"visible">>) of
                 case contact_info(Userid, Contact) of
                     [] ->
                         Result;
+
+                    {error, Reason} ->
+                        ?ERROR_MSG(" retrieval error from userid ~p for contact: ~p: ~p", [ Userid, Contact, Reason ]),
+                        Result;
+
                     Values ->
                         [ [ {<<"id">>, Contact}, {<<"category">>, Category} | Values ] | Result ]
                 end
@@ -965,6 +967,9 @@ contacts_tree(Userid, Categories, Result) ->
     lists:foldl( fun(Category, Acc) ->
         case contacts_info_from_category(Userid, Category) of
             [] ->
+                Acc;
+            {error, Error} ->
+                ?ERROR_MSG(" retrieved error from ~p for category: ~p: ~p", [ Userid, Category, Error ]),
                 Acc;
             Infos ->
                 %?DEBUG("Infos: ~p", [ Infos ]),
