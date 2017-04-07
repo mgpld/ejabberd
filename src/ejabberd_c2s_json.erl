@@ -372,14 +372,11 @@ session_established({login, SeqId, Args}, StateData) ->
 
 
     R = base64:encode(term_to_binary(Now)),
-    % #jid{lserver=LoginServer, luser=LoginUser} = IdJid = jlib:string_to_jid(Id),
     DataId = case binary:split(Id, <<"@">>, [ global ]) of
          [ LoginUser, LoginServer ] ->
-            %jlib:string_to_jid(<<LoginUser/binary, "@", LoginServer/binary>>);
             userid(TmpState, LoginUser, LoginServer, Password);
         
         [ LoginUser, _Domain, LoginServer | _ ] ->
-            % IdJid = jlib:string_to_jid(<<LoginUser/binary, "@", LoginServer/binary>>),
             userid(TmpState, <<LoginUser/binary, "@", _Domain/binary>>, LoginServer, Password)
 
     end,
@@ -469,7 +466,7 @@ session_established({login, SeqId, Args}, StateData) ->
 
             Online = initial_presence(TmpState, Username, [], UserId),
             Status = <<"online">>,
-            UserJid = jlib:string_to_jid(Username),
+            UserJid = string_to_jid(Username),
 
             % Increment command seqid 
             seqid(1),
@@ -4952,3 +4949,22 @@ handle_query(Operation, SeqId, Args, State) ->
 %%            end end, Contacts);
 %% send_message( State, Contact, Message) ->
 %%     send_message( State, [Contact], Message).
+
+string_to_jid(Data) ->
+    Pattern = ets:lookup_element(jlib, string_to_jid_pattern, 2),
+    case binary:split(Data, Pattern) of
+        [ First, Rest ] ->
+            case binary:split(Rest, Pattern) of
+                [ Server, Resource ] ->
+                    #jid{
+                        user=First, server=Server, resource=Resource,
+                        luser=First, lserver=Server, lresource=Resource };
+                [ Server ] ->
+                    Empty = <<>>,
+                    #jid{
+                        user=First, server=Server, resource=Empty,
+                        luser=First, lserver=Server, lresource=Empty }
+            end;
+        _ ->
+            {error, einval}
+    end.

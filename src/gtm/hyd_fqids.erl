@@ -1,6 +1,6 @@
 -module(hyd_fqids).
 % Created hyd_fqids.erl the 02:14:53 (06/02/2014) on core
-% Last Modification of hyd_fqids.erl at 11:34:12 (06/04/2017) on core
+% Last Modification of hyd_fqids.erl at 16:37:09 (07/04/2017) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -328,7 +328,7 @@ internal_error(Code, Args) ->
 % check the fqid validity (is format valid ?)
 % any null bytes are forbidden -> valid is false.
 -spec valid(
-    Value :: iodata() | integer()
+    Value :: iodata() | integer() | float()
 ) -> true | false.
 
 valid(read) ->
@@ -337,16 +337,20 @@ valid(Value) when is_list(Value) ->
     correct(Value);
 valid(Value) when is_integer(Value) ->
     true;
+valid(Value) when is_float(Value) ->
+    true;
 valid(<<>>) -> 
     true;
-valid(Value) ->
+valid(Value) when is_binary(Value) ->
     ?DEBUG(?MODULE_STRING ".~p valid: Value: ~p", [ ?LINE, Value ]),
     case binary:match(Value,<<0>>) of
          nomatch ->
             true;
         _ ->
             false
-    end.
+    end;
+valid(_) ->
+    false.
 
 correct(List) when is_list(List) ->
     lists:all(fun valid/1, List);

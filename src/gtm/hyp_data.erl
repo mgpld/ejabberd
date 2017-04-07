@@ -1,6 +1,6 @@
 -module(hyp_data).
 % Created hyp_data.erl the 18:00:15 (27/05/2015) on core
-% Last Modification of hyp_data.erl at 12:16:57 (06/04/2017) on core
+% Last Modification of hyp_data.erl at 16:38:17 (07/04/2017) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
