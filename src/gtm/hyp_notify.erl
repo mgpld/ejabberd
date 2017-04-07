@@ -1,6 +1,6 @@
 -module(hyp_notify).
 % Created hyp_notify.erl the 08:34:29 (03/09/2016) on core
-% Last Modification of hyp_notify.erl at 12:18:00 (06/04/2017) on core
+% Last Modification of hyp_notify.erl at 20:03:24 (07/04/2017) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -328,6 +328,25 @@ prepare(Type, #state{ roomref=_Fqid, creator=Userid, users=Users } = State) when
 
     end;
 
+prepare(<<"article">> = Type, #state{ roomref=Fqid, users=Users } = State) ->
+   case hyp_data:execute(hyd_fqids, read, [Fqid]) of
+       {ok, Props} ->
+            case hyp_data:extract([<<"author">>,<<"id">>], Props) of
+                undefined ->
+                    % silent stop
+                    {stop, normal};
+
+                Userid ->
+                    ?DEBUG(?MODULE_STRING "[~5w] notify ~p '~p' author: ~p", [ ?LINE, Type, Fqid, Userid ]),
+                    NewUsers = gb_trees:enter(Userid, Type, Users),
+                    {ok, normal, State#state{ users=NewUsers }, ?DELAY_TIMEOUT}
+            end;
+
+       {error, Error} ->
+           {stop, Error}
+   end; 
+    
+
 prepare(Type, #state{ roomref=Fqid,  creator=_Userid } = State) when 
     Type =:= <<"drop">> ->
 
@@ -343,7 +362,11 @@ prepare(Type, #state{ roomref=Fqid,  creator=_Userid } = State) when
 
         {error, Error} ->
             {stop, Error}
-    end.
+    end;
+
+% do nothing
+prepare(_, _State) ->
+    {stop, normal}.
 
 % send_message(Message, #state{ roomref=Ref, host=Host, mod=Module, users=Users, cid=Id } = _State) ->
 
@@ -368,16 +391,16 @@ publish({User, Type, Iter}, Child, Msgid, From, Message, #state{ host=Host, mod=
     Module:route(From, To, Packet ), % realtime notification
     publish(gb_trees:next(Iter), Child, Msgid, From, Message, State).
 
-addchild(<<"0">>, _User, _Child) ->
-    ok;
-addchild(Notifygroup, User, Child) ->
-    hyd_fqids:action(Notifygroup, <<"addChild">>, [ User, Child ]).
-
+% addchild(<<"0">>, _User, _Child) ->
+%     ok;
+% addchild(Notifygroup, User, Child) ->
+%     hyd_fqids:action(Notifygroup, <<"addChild">>, [ User, Child ]).
 
 application(<<"drop">>) -> <<"hychat">>;
 application(<<"page">>) -> <<"community">>;
 application(<<"group">>) -> <<"hychat">>;
 application(<<"thread">>) -> <<"hychat">>;
+application(<<"article">>) -> <<"community">>;
 application(<<"comgroup">>) -> <<"community">>;
 application(<<"timeline">>) -> <<"community">>;
-application(_App) ->  _App.
+application(_App) ->  <<"default">>.

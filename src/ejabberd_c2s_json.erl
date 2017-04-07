@@ -4758,16 +4758,19 @@ action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, E
     mod_chat:route(Host, Element, Creator, message, Packet);
 
 % realtime messages for article childs FEATURE IS POSTPONED
-% action(#state{user=Username, userid=Creator, server=Host} = _State, Element, Type, <<"addChild">>, [Child], _Result) when
-%     Type =:= <<"article">> ->
-% 
-%     RoomType = Type,
-%     mod_chat:create_room(Host, RoomType, Creator, Element, []), % this will create synchronously the room if needed
-%     Packet = make_packet( _State, <<"event">>, [
-%         { <<"new">>, Element}
-%     ]),
-%     mod_chat:route(Host, Element, Creator, message, Packet),
-%     mod_chat:route(Host, Element, Creator, add, [Creator]);
+action(#state{user=Username, userid=Creator, server=Host} = _State, Element, Type, <<"addChild">>, [Child], [Count]) when
+    Type =:= <<"article">> ->
+
+    RoomType = Type,
+    mod_chat:create_room(Host, RoomType, Creator, Element, []), % this will create synchronously the room if needed
+    Packet = make_packet( _State, <<"add">>, [
+        { <<"source">>, Type},
+        { <<"parent">>, Element},
+        { <<"count">>, Count},
+        { <<"child">>, Child}
+    ]),
+    mod_chat:route(Host, Element, Creator, message, Packet), % send the message
+    mod_chat:route(Host, Element, Creator, add, [Creator]); % add the author after adding it to members (author will not be parasited by the rt message)
 
 action(#state{user=_Username, sid=_Sid} = _State, _Element, _Type, _Action, _Args, _Result) ->
     ?DEBUG(?MODULE_STRING "[~5w] default: action on type '~p': Element: '~p' Action: '~p' Args: '~p' Result: '~p'", [ ?LINE, _Type, _Element, _Action, _Args, _Result ]),

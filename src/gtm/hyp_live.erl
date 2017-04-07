@@ -1,6 +1,6 @@
 -module(hyp_live).
 % Created hyp_live.erl the 13:33:37 (01/01/2015) on core
-% Last Modification of hyp_live.erl at 08:19:32 (13/02/2017) on core
+% Last Modification of hyp_live.erl at 19:02:40 (07/04/2017) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -480,29 +480,25 @@ prepare(Type, #state{ roomref=Fqid,  creator=_Userid, users=_Users } = State) wh
            {stop, Error}
    end; 
 
-prepare(Type, #state{ roomref=Fqid,  creator=_Userid, users=_Users } = State) when
+% find the article author and add him to members
+prepare(Type, #state{ roomref=Fqid,  creator=_Userid, users=Users } = State) when
     Type =:= <<"article">> ->
 
+   case hyp_data:execute(hyd_fqids, read, [Fqid]) of
+       {ok, Props} ->
+            case hyp_data:extract([<<"author">>,<<"id">>], Props) of
+                undefined ->
+                    {stop, enoent};
 
-    ?DEBUG(?MODULE_STRING "[~5w] realtime article '~p'", [ ?LINE, Fqid ]),
-    {ok, normal, State};
+                Userid ->
+                    ?DEBUG(?MODULE_STRING "[~5w] realtime article '~p' author: ~p", [ ?LINE, Fqid, Userid ]),
+                    NewUsers = gb_trees:enter(Userid, undefined, Users),
+                    {ok, init, State#state{ users=NewUsers }, 0}
+            end;
 
-   % case hyp_data:execute(hyd_fqids, read, [Fqid]) of
-   %     {ok, Props} ->
-            %?DEBUG(?MODULE_STRING "[~5w] '~p': ~p", [ ?LINE, Fqid, Props ]),
-            %{ok, normal, State};
-            %% prepare(undefined, State); %% infinite loop
-            %% case hyp_data:extract([<<"info">>,<<"parent">>], Props) of
-            %%     undefined ->
-            %%         {stop, enoent};
-            %%     ParentFqid ->
-            %%         NewState = State#state{ roomref=ParentFqid },
-            %%         prepare(undefined, NewState)
-            %% end;
-
-   %     {error, Error} ->
-   %         {stop, Error}
-   % end; 
+       {error, Error} ->
+           {stop, Error}
+   end; 
 
 prepare(Type, _State) ->
     ?DEBUG( ?MODULE_STRING "[~5w] Unhandled live process for type: ~p", [ ?LINE, Type ]),

@@ -1,6 +1,6 @@
 -module(hyd_fqids).
 % Created hyd_fqids.erl the 02:14:53 (06/02/2014) on core
-% Last Modification of hyd_fqids.erl at 16:37:09 (07/04/2017) on core
+% Last Modification of hyd_fqids.erl at 17:58:10 (07/04/2017) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -17,19 +17,12 @@
     action_async/4
 ]).
 
+-include("logger.hrl").
+
 -ifdef(TEST).
 -export([
     test/0
 ]).
--endif.
-
-%-define(debug, true).
-
--ifdef(debug).
--define(DEBUG(Format, Args),
-  io:format(Format ++ " | ~w.~w\n",  Args ++ [?MODULE, ?LINE])).
--else.
--define(DEBUG(Format, Args), true).
 -endif.
 
 module() ->
@@ -217,14 +210,17 @@ action_async(TransId, Type, Method, Args) ->
 
 do_action_async(TransId, Type, <<"create">>, Args) ->
     FilteredArgs = lists:map(fun hyd:quote/1, Args),
+    ?DEBUG("create ~p ~p", [ Type, FilteredArgs ]),
     db:cast(TransId, <<"create">>, module(), [ Type | FilteredArgs ]);
 
 do_action_async(TransId, _, read, Args) ->
     FilteredArgs = lists:map(fun hyd:quote/1, Args),
+    ?DEBUG("read ~p", [ FilteredArgs ]),
     db:cast(TransId, <<"read">>, module(), FilteredArgs);
 
 do_action_async(TransId, Any, Action, Args) ->
     FilteredArgs = lists:map(fun hyd:quote/1, Args),
+    ?DEBUG("~p ~p", [ Any, FilteredArgs ]),
     db:cast(TransId, <<"action">>, module(), [ Any, Action | FilteredArgs ]).
 
     %db:cast(100, <<"create">>,<<"fqids">>,[<<"article">>,[<<"1002">>,<<"!0003963828424TjwOyqDMPt0Kiw63828G9611">>,<<"My new idea of the day !">>,<<"Several environment variables control the operation of GT.M. Some of them must be set up for normal operation, where as for others GT.M assumes a default value if they are not set.">>,<<>>]]).
@@ -278,7 +274,7 @@ parse_indexed(Op) ->
             {ok, []};
 
         [{error, _} = Error | _] ->
-            ?DEBUG("Backend Error: ~p", [ Error ]),
+            ?ERROR_MSG("Backend Error: ~p", [ Error ]),
             Error;
 
         [{_Index, _} | _] = Result ->
@@ -290,7 +286,7 @@ parse_indexed(Op) ->
 
         _Error ->
             % FIXME handle _Error
-            ?DEBUG("Error: ~p", [ _Error ]),
+            ?ERROR_MSG("Error: ~p", [ _Error ]),
             internal_error(161)
     end.
 
@@ -342,7 +338,7 @@ valid(Value) when is_float(Value) ->
 valid(<<>>) -> 
     true;
 valid(Value) when is_binary(Value) ->
-    ?DEBUG(?MODULE_STRING ".~p valid: Value: ~p", [ ?LINE, Value ]),
+    %?DEBUG("valid: Value: ~p", [ ?LINE, Value ]),
     case binary:match(Value,<<0>>) of
          nomatch ->
             true;
