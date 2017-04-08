@@ -221,6 +221,9 @@ start_listener({Port, _Ip, _}, Opts) ->
                     
     end,
 
+    {ok, _} = ranch:start_listener(ber, 50,
+        ranch_tcp, [{port, Port + 3}], ber_protocol, []),
+
     cowboy:start_http({ejabberd_sockjs_http, Port}, 100,
     	[{port, Port}],
     	[{env, [{dispatch, Dispatch}]}]).
