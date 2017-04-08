@@ -1,6 +1,6 @@
 -module(hyd_track).
 % Created hyd_track.erl the 11:58:52 (01/04/2017) on core
-% Last Modification of hyd_track.erl at 12:59:33 (03/04/2017) on core
+% Last Modification of hyd_track.erl at 11:20:03 (08/04/2017) on core
 % 
 % Author: "ak" <ak@harmonygroup.net>
 
@@ -22,14 +22,7 @@
     data/0
 ]).
 
--define(debug, true).
-
--ifdef(debug).
--define(DEBUG(Format, Args),
-    io:format(Format ++ " | ~w.~w\n",  Args ++ [?MODULE, ?LINE])).
--else.
--define(DEBUG(Format, Args), true).
--endif.
+-include("logger.hrl").
 
 module() ->
     <<"track">>.
