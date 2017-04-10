@@ -1,6 +1,6 @@
 -module(hyd_track).
 % Created hyd_track.erl the 11:58:52 (01/04/2017) on core
-% Last Modification of hyd_track.erl at 11:20:03 (08/04/2017) on core
+% Last Modification of hyd_track.erl at 00:43:19 (10/04/2017) on core
 % 
 % Author: "ak" <ak@harmonygroup.net>
 
@@ -199,7 +199,7 @@ do_info(_SeqId, _User, _Id, [], [[Result]]) ->
     {ok, {ok, Result}};
 do_info(_SeqId, _User, _Id, [], Result) ->
     ?DEBUG("do_info: final result: ~p", [ Result ]),
-    {ok, Result};
+    {ok, {ok, Result}};
 do_info(SeqId, User, Id, [{<<"totalSlide">>, Slides} | Rest], Result) ->
     ?DEBUG("do_info: totalSlide result: ~p", [ Result ]),
     db(SeqId, User, <<"track">>, <<"total">>, [ Id, Slides ], undefined),
