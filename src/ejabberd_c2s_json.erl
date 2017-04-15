@@ -491,11 +491,6 @@ session_established({action, SeqId, Args}, State) when is_list(Args) ->
             ?DEBUG(?MODULE_STRING "[~5w] Login with args: ~p", [ ?LINE, Args ]),
             NewState = handle_query(Operation, SeqId, Args, State),
             fsm_next_state(session_established, NewState);
-            %Params = [],
-            %hyd_fqids:action_async(SeqId, Element, Action, [ 0 | Params ]),
-            %Actions = State#state.aux_fields,
-            %NewState = State#state{aux_fields=[{SeqId, [ Element, Action, Params ]} | Actions ]},
-            %fsm_next_state(session_established, NewState);
 
         _ ->
             Answer = make_error(undefined, SeqId, 404, <<"invalid call">>),
@@ -585,7 +580,7 @@ authorized({action, SeqId, Args}, StateData) when is_list(Args) ->
                     Operation = read,
                     hyd_fqids:action_async(SeqId, Id, Operation, Params),
                     Actions = StateData#state.aux_fields,
-                    fsm_next_state(authorized, StateData#state{aux_fields=[{SeqId, [ Id, Operation, Params ]} | Actions ]})
+                    fsm_next_state(authorized, StateData#state{aux_fields=[{SeqId, [ snaptime(), Id, Operation, Params ]} | Actions ]})
             end;
 
         <<"stats">> ->
@@ -1288,13 +1283,16 @@ handle_info({db, SeqId, Result}, StateName, #state{aux_fields=Actions} = State) 
                     %?DEBUG(?MODULE_STRING "[~5w] DB: SeqId: ~p, Actions: ~p", [ ?LINE, SeqId, lists:keysearch(SeqId, 1, Actions) ]),
                     %Packet = make_result(SeqId, Answer),
                     case lists:keysearch(SeqId, 1, Actions) of
-                        {value, {_, [ _Element, read, _Params]}} ->
-                            Packet = make_answer(SeqId, 200, Answer),
+                        {value, {_, [ _Time, _Element, read, _Params]}} ->
+                            Elapsed = snaptime() - _Time,
+                            %Packet = make_result(SeqId, Response, Elapsed),
+                            %Packet = make_answer(SeqId, 200, Answer),
+                            Packet = make_answer(SeqId, 200, Answer, Elapsed),
                             send_element(State, Packet),
                             NewActions = lists:keydelete(SeqId, 1, Actions),
                             fsm_next_state(StateName, State#state{aux_fields=NewActions});
 
-                        {value, {_, [ _Element, _Operation, _Params]}} ->
+                        {value, {_, [ _Time, _Element, _Operation, _Params]}} ->
                             Packet = make_result(SeqId, Answer),
                             send_element(State, Packet),
                             NewActions = lists:keydelete(SeqId, 1, Actions),
@@ -1307,10 +1305,11 @@ handle_info({db, SeqId, Result}, StateName, #state{aux_fields=Actions} = State) 
                     case db_results:unpack(More) of
                         {ok, Answer} ->
                             %?DEBUG(?MODULE_STRING "[~5w] Async DB: SeqId: ~p, Actions: ~p", [ ?LINE, SeqId, lists:keysearch(SeqId, 1, Actions) ]),
-                            Packet = make_result(SeqId, Answer),
-                            send_element(State, Packet),
                             case lists:keysearch(SeqId, 1, Actions) of
-                                {value, {_, [ Element, Operation, Params]}} ->
+                                {value, {_, [ _Time, Element, Operation, Params]}} ->
+                                    Elapsed = snaptime() - _Time,
+                                    Packet = make_result(SeqId, Answer, Elapsed),
+                                    send_element(State, Packet),
                                     action_trigger(State, Element, Infos, Operation, Params, Answer),
                                     NewActions = lists:keydelete(SeqId, 1, Actions),
                                     fsm_next_state(StateName, State#state{aux_fields=NewActions});
@@ -1355,8 +1354,10 @@ handle_info({async, SeqId, Result}, StateName, #state{aux_fields=Actions} = Stat
         {ok, Response} ->  
             ?DEBUG(?MODULE_STRING "[~5w] Async: SeqId: ~p, Result: '~p'", [ ?LINE, SeqId, Response ]),
             case lists:keysearch(SeqId, 1, Actions) of
-                {value, {_, [ _Element, _Operation, _Params]}} ->
-                    Packet = make_result(SeqId, Response),
+                {value, {_, [ _Time, _Element, _Operation, _Params]}} ->
+                    Elapsed = snaptime() - _Time,
+                    %?DEBUG(?MODULE_STRING "[~5w] Async: SeqId: ~p, Elapsed: '~p'", [ ?LINE, SeqId, Elapsed ]),
+                    Packet = make_result(SeqId, Response, Elapsed),
                     send_element(State, Packet),
                     NewActions = lists:keydelete(SeqId, 1, Actions),
                     fsm_next_state(StateName, State#state{aux_fields=NewActions})
@@ -1764,6 +1765,19 @@ make_answer(SeqId, Code, Args) ->
         ]}
     ].
 
+make_answer(SeqId, Code, Args, Time) when is_integer(Time) ->
+    [
+        {<<"a">>, [
+            {<<"id">>,      SeqId},
+            {<<"code">>,    Code},
+            {<<"success">>, <<"true">>},
+            {<<"elapsed">>, integer_to_binary(Time)},
+            {<<"data">>,    Args} 
+        ]}
+    ];
+make_answer(SeqId, Code, Args, _Time) ->
+    make_answer(SeqId, Code, Args).
+
 make_result(SeqId, true) ->
     make_answer(SeqId, 204, [
         {<<"result">>, <<"true">>}
@@ -1799,6 +1813,12 @@ make_result(SeqId, [Result]) when is_binary(Result) ->
 make_result(SeqId, Result) when is_list(Result) ->
     make_answer(SeqId, 200, [ 
         {<<"result">>, Result}
+    ]).
+
+make_result(SeqId, Result, Time) when is_list(Result), is_integer(Time) ->
+    make_answer(SeqId, 200, [ 
+        {<<"result">>, Result},
+        {<<"elapsed">>, integer_to_binary(Time)}
     ]).
 
 make_answer(SeqId, Args) ->
@@ -3752,7 +3772,7 @@ handle_action(Operation, SeqId, Args, State) ->
                     ?DEBUG(?MODULE_STRING "[~5w] handle_action no ActionArgs", [ ?LINE ]),
                     hyd_fqids:action_async(SeqId, Element, Operation, [ State#state.userid ]),
                     Actions = State#state.aux_fields,
-                    State#state{aux_fields=[{SeqId, [ Element, Operation, [] ]} | Actions ]};
+                    State#state{aux_fields=[{SeqId, [ snaptime(), Element, Operation, [] ]} | Actions ]};
 
 
                 {ok, ActionArgs} ->
@@ -3762,7 +3782,7 @@ handle_action(Operation, SeqId, Args, State) ->
                             ?DEBUG(?MODULE_STRING "[~5w] handle_action ActionArgs: ~p, Args: ~p, -> Params: ~p", [ ?LINE, ActionArgs, Args, Params ]),
                             hyd_fqids:action_async(SeqId, Element, Operation, [ State#state.userid | Params ]),
                             Actions = State#state.aux_fields,
-                            State#state{aux_fields=[{SeqId, [ Element, Operation, Params ]} | Actions ]};
+                            State#state{aux_fields=[{SeqId, [ snaptime(), Element, Operation, Params ]} | Actions ]};
 
                         false ->
                             Answer = make_error(SeqId, 406, <<"invalid arguments provided">>),
@@ -4848,7 +4868,7 @@ handle(<<"track">> = Type,  Operation, SeqId, Args, #state{} = State) ->
             #jid{luser=User} = State#state.jid,
             _Response = do_track(OperationId, User, SeqId, Args, State), % asynchronous call
             Actions = State#state.aux_fields,
-            State#state{aux_fields=[{SeqId, [ Type, Operation, Args ]} | Actions ]}
+            State#state{aux_fields=[{SeqId, [ snaptime(), Type, Operation, Args ]} | Actions ]}
     end;    
 
 handle(Type, Operation, SeqId, Args, State) ->
@@ -4910,7 +4930,7 @@ handle_query(Operation, SeqId, Args, State) ->
             Module = <<"init">>, % specific module for initialisation
             hyd_fqids:action_async(SeqId, Module, Operation, [ 0 | Params ]),
             Actions = State#state.aux_fields,
-            State#state{aux_fields=[{SeqId, [ Element, Operation, Params ]} | Actions ]};
+            State#state{aux_fields=[{SeqId, [ snaptime(), Element, Operation, Params ]} | Actions ]};
 
             %?DEBUG(?MODULE_STRING "[~5w] handle_action ActionArgs: ~p, Args: ~p, -> Params: ~p", [ ?LINE, ActionArgs, Args, Params ]),
             %% ActionArgs = [<<"application">>],
@@ -4971,3 +4991,7 @@ string_to_jid(Data) ->
         _ ->
             {error, einval}
     end.
+
+snaptime() ->
+    os:system_time(1000000).
+

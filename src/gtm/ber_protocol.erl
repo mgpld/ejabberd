@@ -1,6 +1,6 @@
 -module(ber_protocol).
 % Created ber_protocol.erl the 17:03:47 (08/04/2017) on core
-% Last Modification of ber_protocol.erl at 19:19:56 (08/04/2017) on core
+% Last Modification of ber_protocol.erl at 01:58:28 (10/04/2017) on core
 % 
 % Author: "ak" <ak@harmonygroup.net>
 
@@ -102,7 +102,7 @@ monitor({_Module, Pid, _Socket}) ->
 	erlang:monitor(process, Pid).
 
 send({Transport, _Pid, Socket}, Data) ->
-    Binary = term_to_binary(Data),
+    Binary = term_to_binary(Data, [{compressed, 9}]),
     Transport:send(Socket, Binary).
 
 close({Transport, _Pid, Socket}) ->

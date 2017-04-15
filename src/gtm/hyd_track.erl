@@ -1,6 +1,6 @@
 -module(hyd_track).
 % Created hyd_track.erl the 11:58:52 (01/04/2017) on core
-% Last Modification of hyd_track.erl at 00:43:19 (10/04/2017) on core
+% Last Modification of hyd_track.erl at 05:31:55 (15/04/2017) on core
 % 
 % Author: "ak" <ak@harmonygroup.net>
 
@@ -244,7 +244,7 @@ insert(SeqId, User, Institution, Name, I, Ids, Result) ->
 run(record, SeqId, User, Lesson, Section, {struct, Items}, Result) ->
     lists:foldl(fun({ItemId, {struct, Answers}}, _Acc0) ->
         lists:foldl(fun({Id, Answer}, _Acc1) ->
-            io:format("run(record): SeqId: ~p, User: ~p, Lesson: ~p, Section: ~p ItemId: ~p Id: ~p Answer: ~p\n", [ 
+            ?DEBUG("run(record): SeqId: ~p, User: ~p, Lesson: ~p, Section: ~p ItemId: ~p Id: ~p Answer: ~p\n", [ 
                 SeqId, User, Lesson, Section, ItemId, Id, Answer ]),
             db(SeqId, User, <<"track">>, <<"record">>, [ Lesson, Section, ItemId, Id, Answer ], Result)
         end, [], Answers)
@@ -253,7 +253,7 @@ run(record, SeqId, User, Lesson, Section, {struct, Items}, Result) ->
 run(reset, SeqId, User, Lesson, Section, Items, Result) ->
     lists:foldl(fun(ItemId, Acc) ->
         NewAcc = db(SeqId, User, <<"track">>, <<"reset">>, [ Lesson, Section, ItemId ], Acc),
-        io:format("run(reset): SeqId: ~p, User: ~p, Lesson: ~p, Section: ~p ItemId: ~p, result: ~p\n", [ 
+        ?DEBUG("run(reset): SeqId: ~p, User: ~p, Lesson: ~p, Section: ~p ItemId: ~p, result: ~p\n", [ 
             SeqId, User, Lesson, Section, ItemId, NewAcc ]),
         NewAcc
     end, Result, Items);

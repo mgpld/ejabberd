@@ -1,6 +1,6 @@
 -module(hyd_fqids).
 % Created hyd_fqids.erl the 02:14:53 (06/02/2014) on core
-% Last Modification of hyd_fqids.erl at 17:58:10 (07/04/2017) on core
+% Last Modification of hyd_fqids.erl at 16:55:07 (15/04/2017) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -210,17 +210,17 @@ action_async(TransId, Type, Method, Args) ->
 
 do_action_async(TransId, Type, <<"create">>, Args) ->
     FilteredArgs = lists:map(fun hyd:quote/1, Args),
-    ?DEBUG("create ~p ~p", [ Type, FilteredArgs ]),
+    ?DEBUG("action.~p: create ~p ~p", [ TransId, Type, FilteredArgs ]),
     db:cast(TransId, <<"create">>, module(), [ Type | FilteredArgs ]);
 
 do_action_async(TransId, _, read, Args) ->
     FilteredArgs = lists:map(fun hyd:quote/1, Args),
-    ?DEBUG("read ~p", [ FilteredArgs ]),
+    ?DEBUG("action.~p: read ~p", [ TransId,  FilteredArgs ]),
     db:cast(TransId, <<"read">>, module(), FilteredArgs);
 
 do_action_async(TransId, Any, Action, Args) ->
     FilteredArgs = lists:map(fun hyd:quote/1, Args),
-    ?DEBUG("~p ~p", [ Any, FilteredArgs ]),
+    ?DEBUG("action.~p: ~p ~p", [ TransId, Any, FilteredArgs ]),
     db:cast(TransId, <<"action">>, module(), [ Any, Action | FilteredArgs ]).
 
     %db:cast(100, <<"create">>,<<"fqids">>,[<<"article">>,[<<"1002">>,<<"!0003963828424TjwOyqDMPt0Kiw63828G9611">>,<<"My new idea of the day !">>,<<"Several environment variables control the operation of GT.M. Some of them must be set up for normal operation, where as for others GT.M assumes a default value if they are not set.">>,<<>>]]).
