@@ -1266,6 +1266,8 @@ handle_info({db, SeqId, Result}, StateName, #state{aux_fields=Actions} = State) 
     case Result of 
         [<<>>] ->
             ?DEBUG(?MODULE_STRING "[~5w] DB: SeqId: ~p, Error: '~p'", [ ?LINE, SeqId, <<>> ]),
+            Packet = make_error(einval, SeqId, undefined, undefined),
+            send_element(State, Packet),
             NewActions = lists:keydelete(SeqId, 1, Actions),
             fsm_next_state(StateName, State#state{aux_fields=NewActions});
 
@@ -1315,15 +1317,28 @@ handle_info({db, SeqId, Result}, StateName, #state{aux_fields=Actions} = State) 
                                     fsm_next_state(StateName, State#state{aux_fields=NewActions});
 
                                 false ->
+                                    Packet = make_error(einval, SeqId, undefined, undefined),
+                                    send_element(State, Packet),
                                     fsm_next_state(StateName, State)
                             end;
 
                         {error, Reason} = Error ->
                             ?DEBUG(?MODULE_STRING "[~5w] DB: SeqId: ~p, Error: ~p", [ ?LINE, SeqId, Error ]),
-                            Packet = make_error(Reason, SeqId, undefined, undefined),
-                            send_element(State, Packet),
-                            NewActions = lists:keydelete(SeqId, 1, Actions),
-                            fsm_next_state(StateName, State#state{aux_fields=NewActions})
+                            %NewActions = lists:keydelete(SeqId, 1, Actions),
+                            %fsm_next_state(StateName, State#state{aux_fields=NewActions})
+                            case lists:keysearch(SeqId, 1, Actions) of
+                                {value, {_, [ _Time, _Element, _Operation, _Params]}} ->
+                                    Elapsed = snaptime() - _Time,
+                                    Packet = make_error(Reason, SeqId, undefined, undefined, Elapsed),
+                                    send_element(State, Packet),
+                                    NewActions = lists:keydelete(SeqId, 1, Actions),
+                                    fsm_next_state(StateName, State#state{aux_fields=NewActions});
+
+                                false ->
+                                    Packet = make_error(einval, SeqId, undefined, undefined),
+                                    send_element(State, Packet),
+                                    fsm_next_state(StateName, State)
+                            end
                     end;
 
                 {error, Reason} = Error ->
@@ -1696,6 +1711,30 @@ bounce_messages() ->
 %     {true, "type"};
 % is_attr(_) -> 
 %     false.
+make_error(timeout, Seqid, Code, Description, Time) when is_integer(Time) ->
+    make_error([
+        {<<"code">>, <<"500">>},
+        {<<"description">>,<<"operation timeout (SRVPB2332)">>}
+    ], Seqid, Code, Description, Time);
+make_error(enoent, Seqid, Code, Description, Time) when is_integer(Time) ->
+    make_error([
+        {<<"code">>, <<"500">>},
+        {<<"description">>,<<"invalid operation (SRVPB2338)">>}
+    ], Seqid, Code, Description, Time);
+make_error(Values, Seqid, _Code, _Description, Time) when is_list(Values), is_integer(Time) ->
+    [ 
+        {<<"success">>, <<"false">>},
+        {<<"status">>,<<"error">>}, 
+        {<<"elapsed">>, integer_to_binary(Time)},
+        {<<"id">>, Seqid},
+        {<<"error">>, Values}
+    ].
+
+make_error(einval, Seqid, _Code, _Description) ->
+    make_error([
+        {<<"code">>, <<"500">>},
+        {<<"description">>,<<"operation invalid (SRVPB1732)">>}
+    ], Seqid, _Code, _Description);
 
 make_error(timeout, Seqid, Code, Description)  ->
     make_error([
@@ -1817,9 +1856,8 @@ make_result(SeqId, Result) when is_list(Result) ->
 
 make_result(SeqId, Result, Time) when is_list(Result), is_integer(Time) ->
     make_answer(SeqId, 200, [ 
-        {<<"result">>, Result},
-        {<<"elapsed">>, integer_to_binary(Time)}
-    ]).
+        {<<"result">>, Result}
+    ], Time).
 
 make_answer(SeqId, Args) ->
     [{<<"a">>, [
