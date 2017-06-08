@@ -1,6 +1,6 @@
 -module(hyd_users).
 % Created hyd_users.erl the 17:16:36 (12/10/2013) on core
-% Last Modification of hyd_users.erl at 07:24:27 (07/04/2017) on core
+% Last Modification of hyd_users.erl at 18:54:12 (08/06/2017) on core
 %
 % Author: rolph
 % Harmony Data - Users
@@ -675,13 +675,13 @@ internal(Userid) ->
     ],
     run(Ops).
 
--spec info(
-    UserId :: non_neg_integer(),
-    Type :: list() | undefined ) -> list().
-
 % returns internal informations 
 info(Userid) ->
     info(Userid, undefined).
+
+-spec info(
+    UserId :: non_neg_integer(),
+    Type :: list() | undefined ) -> list().
 
 info(Userid, undefined) ->
     Ops = [

@@ -962,7 +962,7 @@ authorized({message, SeqId, Args}, StateData) ->
                     %?DEBUG("fxml: ~p", [ xmlelement("message", Args) ]),
                     %Pids = get_members(To),
                     
-                    ToJid = jlib:string_to_jid(To),
+                    ToJid = string_to_jid(To),
                     #jid{luser=ToUser,lserver=ToServer} = ToJid,
                     Pids = get_user_pids(ToUser, ToServer),
                     ?DEBUG(?MODULE_STRING " rtcdata Sending to ~p, pids are: ~p", [ ToUser, Pids ]),
@@ -1883,6 +1883,15 @@ get_user_pids(LUser, LServer) ->
 option_check(X) -> 
     X.
 
+%% @doc Main entry point to configuration sub API
+%% Extract from "operation" the operation and call the
+%% relevant handle_configuration/4
+
+-spec handle_configuration(
+    Id :: non_neg_integer() | undefined,
+    Args :: list(),
+    State :: #state{} ) -> {term(), #state{}}.
+
 handle_configuration(Id, Args, State) ->
     case fxml:get_attr_s(<<"operation">>, Args) of
         <<"set">> ->
@@ -1901,7 +1910,8 @@ handle_configuration(Id, Args, State) ->
 -spec handle_configuration(
     Mode:: read|write|revert|list,
     Id :: non_neg_integer() | undefined,
-    Args :: list() ) -> {term(), #state{}}.
+    Args :: list(),
+    State :: #state{} ) -> {term(), #state{}}.
 
 handle_configuration(Mode, Id, Args, State) ->
        case do_configuration(Mode, Id, Args, State) of

@@ -389,7 +389,6 @@ admin(Id, Args) ->
 invite(Id, Args) ->
     {invite, Id, Args}.
 
-
 handle_data( Data, #state{c2s_pid=Client,conn=Conn} = _State ) ->
     case parse(Data) of
         [] ->
