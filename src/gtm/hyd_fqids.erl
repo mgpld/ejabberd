@@ -1,8 +1,10 @@
+%% Created hyd_fqids.erl the 02:14:53 (06/02/2014) on core
+%% Last Modification of hyd_fqids.erl at 09:50:30 (10/06/2017) on core
+%% 
+%% @author rolph <rolphin@free.fr>
+%% @doc Handle interactions with Fqids.
+
 -module(hyd_fqids).
-% Created hyd_fqids.erl the 02:14:53 (06/02/2014) on core
-% Last Modification of hyd_fqids.erl at 16:55:07 (15/04/2017) on core
-% 
-% Author: "rolph" <rolphin@free.fr>
 
 -export([
     reload/0
@@ -28,10 +30,17 @@
 module() ->
     <<"fqids">>.
 
+%% @doc Reload this backend API engine module.
+%% Reload itself...
+
+-spec reload() -> ok.
 reload() ->
     hyd:reload( module() ).
 
-% read information about an id
+%% @doc Re information about an fqid.
+%% Calling the underlying API engine to do the heavy work.
+%% The Userid is needed since viewing informations of a Fqid depends on
+%% the viewer (i.e. userid)
 -spec read(
     Fqid :: list() | binary(),
     Userid :: list() | binary() ) -> {ok, list()} | {error, term()}.
@@ -106,6 +115,11 @@ do_stats(Fqid, Userid) ->
     ],
     run(Ops).
 
+%% @doc Extract how many arguments the Method of Type call need.
+%% Check if Method and Type are first valid identifiers, then if ok
+%% perform the call to retrieve the arguments count.
+%%
+%% If the Type or Method are invalid, returns an error
 -spec args(
     Type :: list() | binary(),
     Method :: list() | binary()) -> {ok, list()} | {error, term()}.
@@ -118,6 +132,8 @@ args(Type, Method) ->
         false ->
             internal_error(129)
     end.
+
+%% @doc Perform the actual API call to retrieve arguments count.
 
 do_args(Type, Method) ->
     Ops = [
@@ -162,9 +178,9 @@ do_args(Type, Method, Userid) ->
             _Err
     end.
 
-% Action on specific fqids
-% If action is <<"create">>, create a new instance of Type
-% Note: Fqid in this case is a type i.e. "message", or, "photo"
+%% @doc Action on specific fqids.
+%% If action is "create", create a new instance of Type.
+%% Note: Fqid in this case is a type i.e. "message", or, "photo".
 -spec action(
     Type :: list() | binary(),
     Action :: list() | binary(),
@@ -198,7 +214,7 @@ do_action(Any, Action, Args) ->
     ],
     run(Op).
 
-% asynchronous version of action
+%% @doc Asynchronous version of action.
 action_async(TransId, Type, Method, Args) ->
     case correct([Type, Method, Args]) of
         true ->
@@ -223,9 +239,8 @@ do_action_async(TransId, Any, Action, Args) ->
     ?DEBUG("action.~p: ~p ~p", [ TransId, Any, FilteredArgs ]),
     db:cast(TransId, <<"action">>, module(), [ Any, Action | FilteredArgs ]).
 
-    %db:cast(100, <<"create">>,<<"fqids">>,[<<"article">>,[<<"1002">>,<<"!0003963828424TjwOyqDMPt0Kiw63828G9611">>,<<"My new idea of the day !">>,<<"Several environment variables control the operation of GT.M. Some of them must be set up for normal operation, where as for others GT.M assumes a default value if they are not set.">>,<<>>]]).
-
-
+%% @doc Generic call runner.
+%% Perform the API call and handle various responses.
 -spec run(
     Op :: [ tuple() ] ) -> list() | {error, term()}.
 
@@ -321,11 +336,11 @@ internal_error(Code) ->
 internal_error(Code, Args) ->
     hyd:error(?MODULE, Code, Args).
 
-% check the fqid validity (is format valid ?)
-% any null bytes are forbidden -> valid is false.
+%% @doc check the fqid validity (is format valid ?).
+%% Null bytes are forbidden -> valid is false.
 -spec valid(
     Value :: iodata() | integer() | float()
-) -> true | false.
+    ) -> true | false.
 
 valid(read) ->
     true;

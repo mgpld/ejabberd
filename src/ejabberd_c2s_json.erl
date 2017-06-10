@@ -23,6 +23,8 @@
 %%% 02111-1307 USA
 %%%
 %%%----------------------------------------------------------------------
+%%% @author ak@harmonygroup.net
+%%% @doc Mostly inspired from ejabberd_c2s.erl module
 
 -module(ejabberd_c2s_json).
 -author('ak@harmonygroup.net').
@@ -1534,16 +1536,6 @@ send_element(StateData, Element) ->
     %Json = sockjs_json:encode(Element),
     %send_text(StateData, Json).
 
-%-spec send_packet(
-%    StateData::#state{},
-%    Type::binary(),
-%    Args::list(tuple())) -> ok.
-
-%send_packet(StateData, Type, Args) ->
-%    Json = make_packet(StateData, Type, Args),
-%    Element = (Json),
-%    send_text(StateData, Element).
-
 make_packet(StateData, Type, Args) ->
     [{<<"message">>, [
         {<<"type">>, Type},
@@ -1617,42 +1609,26 @@ peerip(SockMod, Socket) ->
 	_ -> undefined
     end.
 
-%% fsm_next_state_pack: Pack the StateData structure to improve
-%% sharing.
-%fsm_next_state_pack(StateName, StateData) ->
-%    fsm_next_state_gc(StateName, pack(StateData)).
 
-%% fsm_next_state_gc: Garbage collect the process heap to make use of
-%% the newly packed StateData structure.
-%fsm_next_state_gc(StateName, PackedStateData) ->
-%    erlang:garbage_collect(),
-%    fsm_next_state(StateName, PackedStateData).
-
-%% fsm_next_state: Generate the next_state FSM tuple with different
-%% timeout, depending on the future state
+%% @doc fsm_next_state: Generate the next_state FSM tuple with different
+%% timeout, depending on the future state.
 fsm_next_state(session_established, StateData) ->
-    %seqid(1),
     {next_state, session_established, StateData, ?C2S_HIBERNATE_TIMEOUT};
 fsm_next_state(authorized, StateData) ->
-    %seqid(1),
     {next_state, authorized, StateData, ?C2S_AUTHORIZED_TIMEOUT};
 fsm_next_state(StateName, StateData) ->
-    %seqid(1),
     {next_state, StateName, StateData, ?C2S_OPEN_TIMEOUT}.
 
-%% fsm_reply: Generate the reply FSM tuple with different timeout,
-%% depending on the future state
+%% @doc fsm_reply: Generate the reply FSM tuple with different timeout,
+%% depending on the future state.
 fsm_reply(Reply, session_established, StateData) ->
-    %seqid(1),
     {reply, Reply, session_established, StateData, ?C2S_HIBERNATE_TIMEOUT};
 fsm_reply(Reply, authorized, StateData) ->
-    %seqid(1),
     {reply, Reply, authorized, StateData, ?C2S_AUTHORIZED_TIMEOUT};
 fsm_reply(Reply, StateName, StateData) ->
-    %seqid(1),
     {reply, Reply, StateName, StateData, ?C2S_OPEN_TIMEOUT}.
 
-%% Used by c2s blacklist plugins
+%% @doc Used by c2s blacklist plugins.
 is_ip_blacklisted(undefined) ->
     false;
 is_ip_blacklisted({IP,_Port}) ->
@@ -1681,36 +1657,8 @@ bounce_messages() ->
             ok
     end.
 
-
-% extract(Args) ->
-%     lists:foldl( fun({K,V}, {Attrs,Rest} = Acc) ->
-%         case is_attr(K) of
-%             {true, NewK} ->
-%                 NewAttrs = [ {NewK,V} | Attrs ],
-%                 NewRest = lists:keydelete(K, 1, Rest),
-%                 { NewAttrs, NewRest };
-%             _ ->
-%                 Acc
-%         end
-%     end, {[], Args}, Args).
-
-% extract_body(Args) ->
-%     case lists:keysearch(<<"body">>, 1, Args) of
-%         {value, {_, Value}} ->
-%             [{xmlelement, "body", [], [{xmlcdata, Value}]}];
-% 
-%         _ ->
-%             []
-%     end.
-% 
-% is_attr(<<"to">>) -> 
-%     {true, "to"};
-% is_attr(<<"from">>) -> 
-%     {true, "from"};
-% is_attr(<<"type">>) -> 
-%     {true, "type"};
-% is_attr(_) -> 
-%     false.
+%% @doc Helper: make_error generate structure for errors.
+%% This version handle the elapsed time parameter.
 make_error(timeout, Seqid, Code, Description, Time) when is_integer(Time) ->
     make_error([
         {<<"code">>, <<"500">>},

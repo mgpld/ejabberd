@@ -1,8 +1,12 @@
+%%
+%% Created hyd.erl the 02:16:47 (06/02/2014) on core
+%% Last Modification of hyd.erl at 10:14:23 (10/06/2017) on core
+%% 
+%% @author rolph <rolphin@free.fr>
+%% @doc Thin layer between db and callers.
+%% Performs the low level calls.
+
 -module(hyd).
-% Created hyd.erl the 02:16:47 (06/02/2014) on core
-% Last Modification of hyd.erl at 07:41:27 (31/01/2017) on core
-% 
-% Author: "rolph" <rolphin@free.fr>
 
 -export([
     cast/1,
@@ -28,7 +32,7 @@
 }).
 
 
-% Create a new operation
+%% @doc Create a new operation.
 operation(Method, Module, Args) ->
     operation( Method, Module, Args, undefined ).
 
@@ -45,8 +49,8 @@ operation( Method, Module, Args, Timeout ) ->
 	args=Args,
 	timeout=Timeout}.
 
-% try to execute a list of non returning function
-% and stop at the first fail
+%% @doc Try to execute a list of non returning function.
+%% Stop at the first fail.
 -spec cast(
     Operations :: list() ) -> ok | {error, term()}.
 
@@ -68,8 +72,8 @@ cast([Op|Ops]) ->
 
     end.
 
-% call a list of operation until the end
-% collect all results even errors
+%% @doc Call a list of operation until the end.
+%% Collect all results even errors.
 -spec call(
     Operations :: list() ) -> list({ok, term()} | {error, term()}).
 
@@ -110,13 +114,17 @@ pcall([]) ->
 pcall(Ops) ->
     do_pcall(Ops).
     
+%% @doc Perform a low level db call.
+%% Extract information from #operation{} and call the low level engine backend.
+
 do_call( #operation{ method=Method, module=Module, args=Args, timeout=Timeout} ) ->
-    %io:format("DEBUG: ~p ~p ~p\n", [ Method, Module, Args ]),
     db:call( Method, Module, Args, Timeout );
 do_call( _ ) ->
     {error, badarg}.
 
-
+%% @doc Force reload a module.
+%% For a module to reload itself.
+%% Reloading make the updated code be installed.
 reload(Module) ->
     Op = #operation{
         method=[],
@@ -125,7 +133,10 @@ reload(Module) ->
 
     do_call( Op ).
 
-% Safety first
+%% @doc Safety first.
+%% Quote parameters before being sent to low level.
+%% The '"' is being transformed by the arbitrary character char(31).
+%% The reverse operation is done by the extraction.
 quote(true) -> <<"true">>;
 quote(false) -> <<"false">>;
 quote(Value) when is_float(Value) ->
@@ -135,6 +146,9 @@ quote(Value) when is_binary(Value) ->
 quote(Value) when is_integer(Value) ->
     Value.
 
+%% @doc Reverse quote operation.
+%% Transform char(31) into '"'.
+%% Handle binary(), and key value list of binaries.
 unquote(Value) when is_binary(Value) ->
     binary:replace(Value, <<31>>, <<"\"">>, [global]);
 
@@ -188,13 +202,15 @@ fmt_error(Module, Code, Args) ->
         {<<"description">>, <<"internal error">>},
         {<<"arguments">>, Args} ]}.
 
+%% @doc Compute hash in module names.
+%% @deprecated Unused.
 hash_name( Name ) when is_atom(Name) ->
     hash_name( atom_to_list(Name) );
 hash_name( Name ) when is_list(Name) ->
     list_to_binary( [ A || A <- Name, not lists:member(A,"aeiouy_") ]).
 
-% explore generic method
-
+%% @doc explore generic method.
+%% @deprecated Unused.
 explore(Module, Userid) ->
     explore(Module, Userid, 50).
 

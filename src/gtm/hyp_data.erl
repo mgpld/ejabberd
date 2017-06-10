@@ -1,8 +1,10 @@
+%% Created hyp_data.erl the 18:00:15 (27/05/2015) on core
+%% Last Modification of hyp_data.erl at 09:53:39 (10/06/2017) on core
+%% 
+%% @author rolph <rolphin@free.fr>
+%% @doc Action API helpers.
+
 -module(hyp_data).
-% Created hyp_data.erl the 18:00:15 (27/05/2015) on core
-% Last Modification of hyp_data.erl at 16:38:17 (07/04/2017) on core
-% 
-% Author: "rolph" <rolphin@free.fr>
 
 -export([
     action/4,
@@ -13,9 +15,26 @@
 -include("ejabberd.hrl").
 -include("logger.hrl").
 
+%% @doc Action entry point.
+%% Execute an API call synchronously.
+
+-spec action( 
+    Userid :: non_neg_integer(),
+    Fqid :: binary(),
+    Action :: binary(),
+    Args :: list(binary()) ) -> {error, term()} | {ok, term()}.
+
 action(Userid, Fqid, Action, Args) ->
     ?DEBUG(?MODULE_STRING " action: Userid ~p, Action ~p, Args: ~p\n", [ Userid, Action, Args ]),
     execute( hyd_fqids, action, [ Fqid, Action, [ Userid | Args ] ]).
+
+%% @doc Execute the API call.
+%% Call synchronously the underlying api backend.
+
+-spec execute( 
+    Module :: binary(),
+    Function :: binary(),
+    Args :: list(binary()) ) -> {error, term()} | {ok, term()}.
 
 execute( Module, Function, Args) ->
     ?DEBUG(?MODULE_STRING "[~5w] execute: Module ~p, Function ~p, Args: ~p\n", [ ?LINE, Module, Function, Args ]),
@@ -44,6 +63,10 @@ execute( Module, Function, Args) ->
 
     end.
 
+%% @doc Extract keys from list of key value recursively.
+%% Deep looking inside eventual lists of key value inside list of key values.
+%% Perform something like XPath for key values.
+
 -spec extract( 
     Path :: list(),
     Props :: list({binary(), binary()})) -> binary() | <<>>.
@@ -51,11 +74,12 @@ execute( Module, Function, Args) ->
 extract(Path, Props) ->
     do_get(Path, Props, <<>>).
 
+%% @doc Implementation of recursive key value extractions.
+
 -spec do_get( 
     Path :: list(),
     Props :: list({binary(), binary()}),
     Default :: term() ) -> binary() | term().
-
 
 do_get([], Value, _) ->
     Value;

@@ -1,11 +1,11 @@
--module(hyd_users).
-% Created hyd_users.erl the 17:16:36 (12/10/2013) on core
-% Last Modification of hyd_users.erl at 18:54:12 (08/06/2017) on core
-%
-% Author: rolph
-% Harmony Data - Users
+%%
+%% Created hyd_users.erl the 17:16:36 (12/10/2013) on core
+%% Last Modification of hyd_users.erl at 12:03:33 (10/06/2017) on core
+%%
+%% @author rolp <rolphin@free.fr>
+%% @doc Handle various read and write operations on users.
 
-%-define(debug, true).
+-module(hyd_users).
 
 -export([
     all/2,
@@ -247,23 +247,31 @@ childs_values(UserId, Subscripts) ->
     ],
     run(Ops).
 
+%% @doc Add sub element.
+%% @deprecated Old.
 add_sub_element(Userid, Category, Item) ->
     Ops = [
         hyd:operation(<<"insertSubElement">>, module(), [ Userid, Category, Item ])
     ],
     run(Ops).
 
+%% @doc Del sub element.
+%% @deprecated Old.
 del_sub_element(Userid, Category, Item) ->
     Ops = [
         hyd:operation(<<"removeSubElement">>, module(), [ Userid, Category, Item ])
     ],
     run(Ops).
 
+%% @doc Del sub element.
+%% @deprecated Old.
 replace_sub_element(Userid, Category, Item, NewItem) ->
     Ops = [
         hyd:operation(<<"removeSubElement">>, module(), [ Userid, Category, Item, NewItem ])
     ],
     run(Ops).
+
+%% @doc Return the list of user profiles.
 
 -spec profiles(
     UserId :: non_neg_integer()) -> list().
@@ -271,6 +279,8 @@ replace_sub_element(Userid, Category, Item, NewItem) ->
 profiles(UserId) ->
     all(UserId, [?CONF_PROP,"profiles"]).
 
+%% @doc Return information about a specific profile.
+%% @deprecated Don't use this call, returns always an error.
 -spec profile_get(
     UserId :: non_neg_integer(),
     Profile :: list() | binary()) -> list().
@@ -278,6 +288,9 @@ profiles(UserId) ->
 profile_get(_Userid, _Profile) ->
     internal_error(325).
     
+
+%% @doc Store a value inside a profile.
+%% 
 -spec profile_set_value(
     Userid :: non_neg_integer(),
     Profile :: list(),
@@ -285,9 +298,9 @@ profile_get(_Userid, _Profile) ->
     Value :: list() ) -> ok.
 
 profile_set_value( Userid, Profile, Key, Value ) ->
-    %egistry_add_value(Userid, Profile, Key, Value ).
     write(Userid, [?CONF_PROP,"profiles",Profile,Key], Value).
 
+%% @doc Delete a value inside a profile.
 -spec profile_del_value(
     Userid :: non_neg_integer(),
     Profile :: list(),
@@ -296,6 +309,7 @@ profile_set_value( Userid, Profile, Key, Value ) ->
 profile_del_value( Userid, Profile, Key ) ->
     delete(Userid, [?CONF_PROP,"profiles",Profile,Key]).
 
+%% @doc Delete a profile.
 -spec profile_delete(
     UserId :: non_neg_integer(),
     Value :: list() | binary()) -> ok.
@@ -303,6 +317,8 @@ profile_del_value( Userid, Profile, Key ) ->
 profile_delete(Userid,Value) ->
     delete(Userid, [?CONF_PROP,"profiles",Value]).
 
+%% @doc Read one specific value for a key.
+%% @deprecated Not working, don't use it.
 profiles_tree(UserId, Key) ->
     Fun = fun(Profile) ->
         %io:format("---> ~p\n", [ Profile ]),
@@ -310,6 +326,7 @@ profiles_tree(UserId, Key) ->
     end,
     foreach(UserId,[?CONF_PROP,"profiles"], Fun).
 
+%% @doc Return all profiles and all key values for a specific user.
 profiles_tree(UserId) ->
     Fun = fun(Profile) ->
         %io:format("---> ~p\n", [ Profile ]),
@@ -344,16 +361,6 @@ presences_tree(Userid) ->
     end,
     foreach(Userid,[?CONF_PROP,"presences"], Fun).
 
-%%     case egtm_util:foreach(Root,[UserId,?CONF_PROP,"profiles"], fun(_,S,A) -> 
-%% 		[ list_to_binary(lists:last(S)) | A ] 
-%% 	end) of
-%% 
-%% 	nomatch -> 
-%% 	    [];
-%% 	{ok, Res} ->
-%% 	    Res
-%%     end.
-
 % Contacts Categories or Contacts Group
 % For one category it should exists one key in the registry
 % registy_add_value(Userid, ContactCategory, [{keys,values}....]).
@@ -363,22 +370,28 @@ presences_tree(Userid) ->
 contacts_categories(UserId) ->
     childs(UserId, ["contacts","categories"]).
 
+%% @doc Retrieve the contact invitation lists.
+
 -spec contacts_invitations(
     Userid :: non_neg_integer(),
     Type :: list() | binary()) -> list().
 
 contacts_invitations(Userid, Type) ->
-    %childs(Userid, ["contacts","invitations","items",Type]).
     Ops = [
         hyd:operation(<<"listInvitations">>, module(), [ Userid, Type ])
     ],
     run(Ops).
+
+%% @doc Add a contact.
 
 add_contact(UserId,ContactId) ->
     Ops = [
     	hyd:operation(<<"addContact">>, module(), [ UserId, ContactId ])
     ],
     run(Ops).
+
+
+%% @doc Perform the invitation contact operation.
 
 -spec invite_contact(
     Userid :: non_neg_integer(),
@@ -389,6 +402,8 @@ invite_contact(Userid,Contactid) ->
     	hyd:operation(<<"inviteContact">>, module(), [ Userid, Contactid ])
     ],
     run(Ops).
+
+%% @doc Perform the accept invitation operation.
 
 -spec accept_contact(
     Userid :: non_neg_integer(),
@@ -404,11 +419,15 @@ accept_contact(Userid,Contactid) ->
     Userid :: non_neg_integer(),
     Contactid :: non_neg_integer() ) -> list().
 
+%% @doc Perform the refuse invitation operation.
+
 refuse_contact(Userid,Contactid) ->
     Ops = [
 	    hyd:operation(<<"refuseContact">>, module(), [ Userid, Contactid ])
     ],
     run(Ops).
+
+%% @doc Perform the cancel invitation operation.
 
 -spec cancel_contact(
     Userid :: non_neg_integer(),
@@ -420,6 +439,8 @@ cancel_contact(Userid,Contactid) ->
     ],
     run(Ops).
 
+%% @doc Perform the block contact operation.
+
 -spec block_contact(
     Userid :: non_neg_integer(),
     Contactid :: non_neg_integer() ) -> list().
@@ -429,6 +450,8 @@ block_contact(Userid,Contactid) ->
         hyd:operation(<<"blockContact">>, module(), [ Userid, Contactid ])
     ],
     run(Ops).
+
+%% @doc Perform the unblock contact operation.
 
 -spec unblock_contact(
     Userid :: non_neg_integer(),
@@ -440,6 +463,8 @@ unblock_contact(Userid,Contactid) ->
     ],
     run(Ops).
 
+%% @doc Perform the delete contact operation.
+
 -spec delete_contact(
     Userid :: non_neg_integer(),
     Contactid :: non_neg_integer() ) -> list().
@@ -449,6 +474,8 @@ delete_contact(UserId,ContactId) ->
         hyd:operation(<<"deleteContact">>, module(), [ UserId, ContactId ])
     ],
     run(Ops).
+
+%% @doc Return the list of blocked contacts.
 
 -spec list_blocked(
     Userid :: non_neg_integer() ) -> list().
@@ -497,7 +524,7 @@ add_contact_in_category(UserId,ContactId,Category) ->
     ],
     run(Ops).
     
-% Extracts "visible" informations from the user contacts
+%% @doc Extracts contacts from a contact list.
 all_contacts_from_category(Userid,Category) ->
     Ops = [
         hyd:operation(<<"contactsFromContactlist">>, module(), [ Userid, Category ])
@@ -513,6 +540,8 @@ all_specific_properties_from_category(UserId, Category, Type) ->
     end,
     childs(UserId, ["contacts","categories","items",Category], Fun).
 
+%% @doc Retrieve user groups.
+
 -spec groups(
     Userid :: non_neg_integer() ) -> list().
 
@@ -522,6 +551,8 @@ groups(Userid) ->
     ],
     run(Ops).
     
+%% @doc Retrieve user threads.
+
 -spec threads(
     Userid :: non_neg_integer() ) -> list().
     
@@ -530,6 +561,8 @@ threads(Userid) ->
         hyd:operation(<<"getThreads">>, module(), [ Userid ])
     ],
     run(Ops).
+
+%% @doc Retrieve user contact lists.
 
 -spec contactlists(
     Userid :: non_neg_integer() ) -> list().
@@ -540,18 +573,21 @@ contactlists(Userid) ->
     ],
     run(Ops).
 
+%% @doc Retrieve user pages.
 pages(Userid) ->
     Ops = [
         hyd:operation(<<"getPages">>, module(), [ Userid ])
     ],
     run(Ops).
 
+%% @doc Retrieve user subscriptions.
 subscriptions(Userid) ->
     Ops = [
         hyd:operation(<<"getSubscriptions">>, module(), [ Userid ])
     ],
     run(Ops).
 
+%% @doc Retrieve user community groups.
 comgroups(Userid) ->
     Ops = [
         hyd:operation(<<"getComGroups">>, module(), [ Userid ])
@@ -561,7 +597,7 @@ comgroups(Userid) ->
 -spec userid(
     Username :: list() | binary(),
     Domain :: list() | binary(),
-    Passord :: list() | binary()) -> list().
+    Password :: list() | binary()) -> list().
 
 userid(Username,Domain,Password) ->
     Ops = [
@@ -569,9 +605,12 @@ userid(Username,Domain,Password) ->
     ],
     run(Ops).
 
+%% @doc Add a category to an user.
+
 -spec add_category(
     UserId :: non_neg_integer(),
     Category :: list() | binary() ) -> ok.
+
 add_category(UserId, Category) ->
     Ops = [
         hyd:operation(<<"addCategory">>, module(), [ UserId, Category ])
