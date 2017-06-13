@@ -1,6 +1,6 @@
 -module(hyp_live).
 % Created hyp_live.erl the 13:33:37 (01/01/2015) on core
-% Last Modification of hyp_live.erl at 09:51:57 (11/04/2017) on core
+%% Last Modification of hyp_live.erl at 15:24:03 (13/06/2017) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -399,6 +399,7 @@ prepare(Type, #state{ roomref=Fqid, creator=Userid, users=Users } = State) when
     Type =:= <<"conversationgroup">>;
     Type =:= <<"conversation">>;
     Type =:= <<"comgroup">>;
+    Type =:= <<"obclive">>;
     Type =:= <<"thread">>;
     Type =:= <<"group">> ->
 
