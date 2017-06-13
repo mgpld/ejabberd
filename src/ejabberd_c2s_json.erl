@@ -940,6 +940,8 @@ authorized({action, SeqId, Args}, StateData) when is_list(Args) ->
         Type ->
             case fxml:get_attr_s(<<"operation">>, Args) of
                 <<>> ->
+                    Packet = make_error(einval, SeqId, undefined, undefined),
+                    send_element(StateData, Packet),
                     fsm_next_state(authorized, StateData);
 
                 Operation ->
