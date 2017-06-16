@@ -1002,7 +1002,7 @@ authorized({message, SeqId, Args}, StateData) ->
                         Body ->
 
                             From = StateData#state.user,
-                            Json = [{<<"message">>, [
+                            Message = [{<<"message">>, [
                                         {<<"type">>,<<"chat">>},
                                         {<<"sequence">>, SeqId},
                                         {<<"from">>, [
@@ -1011,10 +1011,9 @@ authorized({message, SeqId, Args}, StateData) ->
                                         {<<"discussionid">>, BTo},
                                         {<<"body">>, Body}]}],
 
-                            %Body = (Json),
-                            ?DEBUG(?MODULE_STRING " chat Sending to ~p Data: ~p", [ BTo, Body ]),
+                            ?DEBUG(?MODULE_STRING " chat Sending to ~p\n~p\n", [ BTo, Message ]),
                             #jid{lserver=Host} = StateData#state.jid,
-                            mod_chat:route(Host, BTo, From, message, Json),
+                            mod_chat:route(Host, BTo, From, message, Message),
 
                             fsm_next_state(authorized, StateData)
                     end
@@ -4739,8 +4738,9 @@ action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, E
     mod_chat:route(Host, Element, Creator, message, Packet);
 
 action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, Element, Type, <<"addChild">>, [Child], [Count]) when 
-    Type =:= <<"conversationgroup">>;
-    Type =:= <<"conversation">> ->
+    Type =:= <<"obclive">>;
+    Type =:= <<"conversation">>;
+    Type =:= <<"conversationgroup">> ->
 
     RoomType = 0,
     mod_chat:create_room(Host, RoomType, Creator, Element, []), % this will create synchronously the room if needed

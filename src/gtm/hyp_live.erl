@@ -1,6 +1,6 @@
 -module(hyp_live).
 % Created hyp_live.erl the 13:33:37 (01/01/2015) on core
-%% Last Modification of hyp_live.erl at 15:24:03 (13/06/2017) on core
+%% Last Modification of hyp_live.erl at 16:49:36 (16/06/2017) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -55,8 +55,7 @@
 ]).
 
 % -define( UINT16(X),	X:16/native-unsigned).
-%-define( INACTIVITY_TIMEOUT, 5 * 60000). % 5 minutes
--define( INACTIVITY_TIMEOUT, 60 * 1000). % 60 seconds
+-define( INACTIVITY_TIMEOUT, 5 * 60000). % 5 minutes
 
 -record(question, {
     id,
@@ -223,7 +222,7 @@ init(timeout, #state{
             fsm_next_state(normal, State#state{ notify=Pid });
 
         {error, _Reason} ->
-            ?ERROR_MSG(?MODULE_STRING "[~5w] HYP_LIVE: Notify process failed. Error creating new room for type ~p (~p) mod: ~p", [ ?LINE, RoomRef, RoomId, Module]),
+            ?ERROR_MSG(?MODULE_STRING "[~5w] HYP_LIVE: Notify process failed. Error creating new room ~p (~p) mod: ~p", [ ?LINE, RoomRef, RoomId, Module]),
             {stop, normal, State}
     end;
 
