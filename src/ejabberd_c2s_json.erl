@@ -1803,6 +1803,10 @@ make_result(SeqId, Result) when is_list(Result) ->
         {<<"result">>, Result}
     ]).
 
+make_result(SeqId, Result, Time) when is_binary(Result), is_integer(Time) ->
+    make_answer(SeqId, 200, [
+        {<<"result">>, Result}
+    ], Time);
 make_result(SeqId, Result, Time) when is_list(Result), is_integer(Time) ->
     make_answer(SeqId, 200, [ 
         {<<"result">>, Result}
