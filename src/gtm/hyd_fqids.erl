@@ -236,7 +236,7 @@ do_action_async(TransId, _, read, Args) ->
 
 do_action_async(TransId, Any, Action, Args) ->
     FilteredArgs = lists:map(fun hyd:quote/1, Args),
-    ?DEBUG("action.~p: ~p ~p", [ TransId, Any, FilteredArgs ]),
+    ?DEBUG("action.~p: Any: ~p Action: ~p Args: ~p", [ TransId, Any, Action, FilteredArgs ]),
     db:cast(TransId, <<"action">>, module(), [ Any, Action | FilteredArgs ]).
 
 %% @doc Generic call runner.
