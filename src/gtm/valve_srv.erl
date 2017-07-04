@@ -1,3 +1,5 @@
+%% coding: utf-8
+
 -module(valve_srv).
 
 -behaviour(gen_server).
@@ -112,7 +114,7 @@ do_poll(Pid, Fun, Count) ->
             end;
 
         {ok, {Operation, Client} = _Args} when is_tuple(Client) ->
-            %?DEBUG(?MODULE_STRING ".~p ~p ** gen_server will handle : ~p instance ~p.\n", [ ?LINE, self(), _Args, Count ]),
+            %?DEBUG("** gen_server will handle : ~p instance ~p", [ ?LINE, self(), _Args, Count ]),
             Start = os:timestamp(),
             Result = Fun( Operation ),
             gen_server:reply( Client, Result),
@@ -120,7 +122,7 @@ do_poll(Pid, Fun, Count) ->
             do_poll(Pid, Fun, Count - 1);
 
         {ok, Operation, Client, TransId} when is_pid(Client) ->
-            %?DEBUG(?MODULE_STRING ".~p ~p ** async.     will handle : ~p, client: ~p, transid: ~p, round ~p.\n", [ ?LINE, self(), Operation, Client, TransId, Count ]),
+            %?DEBUG("** async.     will handle : ~p, client: ~p, transid: ~p, round ~p.\n", [ Operation, Client, TransId, Count ]),
             Result = Fun({call, Operation}),
             Client ! {db, TransId, Result},
             do_poll(Pid, Fun, Count - 1);
@@ -140,6 +142,10 @@ handle_call(snap, _From, #state{queries=Q} = State) ->
 
 handle_call(poll, From, #state{childs=Childs, queue=Q} = State) ->
     case queue:out( Q ) of
+        {{value, {cast, Operation, Client, TransId}}, NewQ} ->
+            %?DEBUG("** cast Unqueue Operation: ~p Client: ~p TransId: ~p\n", [ Operation, Client, TransId ]),
+            {reply, {ok, Operation, Client, TransId}, State#state{queue=NewQ}};
+
         {{value, { _Query, _, _Client } = Args}, NewQ} ->
             %?DEBUG(?MODULE_STRING ".~p (~p) Unqueue ~p/~p to ~p\n", [ ?LINE, self(), _Query, _Client, From ]),
             {reply, {ok, Args}, State#state{queue=NewQ}};
@@ -152,7 +158,6 @@ handle_call(poll, From, #state{childs=Childs, queue=Q} = State) ->
             %{noreply, State#state{ childs= lists:reverse([ From | Childs ]) }}
             %{noreply, State#state{ childs= [ From | Childs ] }}
     end;
-
 
 handle_call({Operation, Timeout}, From, #state{childs=[], queue=Q, miss=Miss} = State) when is_tuple(Operation) ->
     %?DEBUG(?MODULE_STRING ".~p (~p) No worker ready to answer query, queuing ~p/~p (~p) and hanging (waiting for worker)\n", [ ?LINE, self(), Operation, From, Miss ]),
@@ -176,9 +181,15 @@ handle_call(_Query, _Node, State) ->
 
 % Callback Casts
 handle_cast({Client, [ TransId | Operation ]}, #state{childs=[Child | Rest], queries=Queries} = State) ->
-    %?DEBUG(?MODULE_STRING ".~p (~p) handle_cast: TransId: ~p, Operation: ~p", [ ?LINE, self(), TransId, Operation ]),
+    ?DEBUG("handle_cast: Client: ~p, TransId: ~p, Operation: ~p", [ Client, TransId, Operation ]),
     gen_server:reply(Child, {ok, Operation, Client, TransId}), 
     {noreply, State#state{childs=Rest, queries=Queries+1}};
+
+handle_cast({Client, [ TransId | Operation ]}, #state{childs=[], queue=Q, miss=Miss} = State) ->
+    ?DEBUG("handle_cast: AddToQueue Client: ~p, TransId: ~p, Operation: ~p", [ Client, TransId, Operation ]),
+    Item = {cast, Operation, Client, TransId},
+    NewQ = queue:in(Item, Q),
+    {noreply, State#state{ queue=NewQ, miss=Miss+1 }};
 
 handle_cast({remove, Child}, #state{childs=Childs} = State) ->
     NewChilds = lists:keydelete( Child, 1, Childs ),
