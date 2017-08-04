@@ -115,7 +115,6 @@ do_poll(Pid, Fun, Count) ->
 
         {ok, {Operation, Client} = _Args} when is_tuple(Client) ->
             %?DEBUG("** gen_server will handle : ~p instance ~p", [ ?LINE, self(), _Args, Count ]),
-            Start = os:timestamp(),
             Result = Fun( Operation ),
             gen_server:reply( Client, Result),
             %?DEBUG(?MODULE_STRING ".~p ~p ** gen_server     handled : ~p in ~p ns\n", [ ?LINE, self(), _Args, timer:now_diff(os:timestamp(), Start) ]),
