@@ -4768,22 +4768,32 @@ action(#state{userid=Creator, server=Host} = _State, Element, Type, <<"update">>
         { <<"child">>, Element}]),
     mod_chat:route(Host, Element, Creator, message, Packet);
 
-% when an addChild has been processed in a page, comgroup, or timeline, this new child must be forwarded to
-% all subscribers of this page, comgroup or timeline.
+%% @doc Handling addChild event.
+%% When addChild has been processed in a page, institution page, comgroup, or timeline, this new child must be forwarded to
+%% all subscribers of this element.
 action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, Element, Type, <<"addChild">>, [Child], [Count]) when 
     Type =:= <<"page">>;
     Type =:= <<"comgroup">>;
-    Type =:= <<"timeline">> ->
+    Type =:= <<"timeline">>;
+    Type =:= <<"institutionpage">> ->
 
     RoomType = Type,
-    mod_chat:create_room(Host, RoomType, Creator, Element, []), % this will create synchronously the room if needed
-    Packet = make_packet( _State, <<"add">>, [
-        { <<"parent">>, Element},
-        { <<"count">>, Count},
-        { <<"child">>, Child}]),
-    mod_chat:route(Host, Element, Creator, message, Packet);
+    %% @doc this will create synchronously the room if needed.
+    %% Room may not be created because there are no suscribers at all.
+    case mod_chat:create_room(Host, RoomType, Creator, Element, []) of
+        ok ->
+            Packet = make_packet( _State, <<"add">>, [
+                { <<"parent">>, Element},
+                { <<"count">>, Count},
+                { <<"child">>, Child}]),
+            mod_chat:route(Host, Element, Creator, message, Packet);
 
-% realtime messages for article childs FEATURE IS POSTPONED
+        undefined ->
+            false
+    end;
+
+%% @doc realtime messages for article childs FEATURE IS POSTPONED.
+%%
 action(#state{user=Username, userid=Creator, server=Host} = _State, Element, Type, <<"addChild">>, [Child], [Count]) when
     Type =:= <<"article">> ->
 

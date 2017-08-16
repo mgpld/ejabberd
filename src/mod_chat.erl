@@ -368,11 +368,15 @@ handle_call({create, {type, write}, From, RoomRef, Opts}, _From,
     register_room(Host, RoomRef, Pid),
     {reply, ok, State};
 
+%% @doc Create a persisting room type.
+%% Returns 'ok' when a message can be posted.
+%% Returns 'undefined when the room was not started because of no subscribers or error.
 handle_call({create, Type, From, RoomRef, Opts}, _From,
     #state{host = Host, server_host = ServerHost} = State) when
     Type =:= <<"page">>;
     Type =:= <<"comgroup">>;
-    Type =:= <<"timeline">> ->
+    Type =:= <<"timeline">> ;
+    Type =:= <<"institutionpage">> ->
 
     case existing_room(Host, RoomRef) of
         false ->
@@ -385,7 +389,7 @@ handle_call({create, Type, From, RoomRef, Opts}, _From,
                     {reply, ok, State};
 
                 {error, _} -> %the persisting room is not needed because no subscribers
-                    {reply, ok, State}
+                    {reply, undefined, State}
             end;
 
         {ok, _Pid} ->
