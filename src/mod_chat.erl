@@ -370,9 +370,9 @@ handle_call({create, {type, write}, From, RoomRef, Opts}, _From,
 
 handle_call({create, Type, From, RoomRef, Opts}, _From,
     #state{host = Host, server_host = ServerHost} = State) when
-    Type =:= <<"timeline">>;
+    Type =:= <<"page">>;
     Type =:= <<"comgroup">>;
-    Type =:= <<"page">> ->
+    Type =:= <<"timeline">> ->
 
     case existing_room(Host, RoomRef) of
         false ->
