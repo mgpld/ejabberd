@@ -375,7 +375,8 @@ handle_call({create, Type, From, RoomRef, Opts}, _From,
     #state{host = Host, server_host = ServerHost} = State) when
     Type =:= <<"page">>;
     Type =:= <<"comgroup">>;
-    Type =:= <<"timeline">> ;
+    Type =:= <<"timeline">>;
+    Type =:= <<"classgroup">>;
     Type =:= <<"institutionpage">> ->
 
     case existing_room(Host, RoomRef) of

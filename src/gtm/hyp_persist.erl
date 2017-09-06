@@ -1,6 +1,6 @@
 -module(hyp_persist).
 % Created hyp_persist.erl the 12:35:09 (04/11/2015) on core
-%% Last Modification of hyp_persist.erl at 10:00:21 (16/08/2017) on core
+%% Last Modification of hyp_persist.erl at 11:28:39 (04/09/2017) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -288,6 +288,7 @@ prepare(undefined, #state{ roomref=Fqid, creator=_Userid, users=_Users } = State
 prepare(Type, #state{ roomref=Fqid, creator=Userid, users=Users } = State) when 
     Type =:= <<"page">>;
     Type =:= <<"comgroup">>;
+    Type =:= <<"classgroup">>;
     Type =:= <<"institutionpage">> ->
 
     case hyp_data:action(Userid, Fqid, <<"members">>, []) of

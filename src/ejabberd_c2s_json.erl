@@ -4774,6 +4774,7 @@ action(#state{userid=Creator, server=Host} = _State, Element, Type, <<"update">>
 action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, Element, Type, <<"addChild">>, [Child], [Count]) when 
     Type =:= <<"page">>;
     Type =:= <<"comgroup">>;
+    Type =:= <<"classgroup">>;
     Type =:= <<"timeline">>;
     Type =:= <<"institutionpage">> ->
 
