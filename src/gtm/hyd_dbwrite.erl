@@ -1,6 +1,6 @@
 -module(hyd_dbwrite).
 % Created hyd_dbwrite.erl the 12:25:51 (26/01/2016) on core
-% Last Modification of hyd_dbwrite.erl at 11:34:18 (08/02/2016) on sd-19230
+%% Last Modification of hyd_dbwrite.erl at 00:12:08 (06/09/2017) on core
 % 
 % Author: "rolph" <ak@harmonygroup.net>
 
@@ -61,7 +61,7 @@ handle_packet(_Socket, _Addr, Port, Packet, Opts) ->
             ?ERROR_MSG(?MODULE_STRING ".~p FAIL! Domain: ~p Method: ~p, Args: ~p: ~p", [ ?LINE, Domain, Method, Args, _Result ]),
             ok
             
-    after 1000 ->
+    after 10000 ->
             ?DEBUG(?MODULE_STRING ".~p FAIL! Timeout: Domain: ~p Method: ~p, Args: ~p", [ ?LINE, Domain, Method, Args ]),
             ok
     end.
