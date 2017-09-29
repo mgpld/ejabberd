@@ -4748,6 +4748,7 @@ action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, E
 action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, Element, Type, <<"addChild">>, [Child], [Count]) when 
     Type =:= <<"obclive">>;
     Type =:= <<"conversation">>;
+    Type =:= <<"classconversation">>;
     Type =:= <<"conversationgroup">> ->
 
     RoomType = 0,

@@ -1,6 +1,6 @@
 -module(hyp_notify).
 % Created hyp_notify.erl the 08:34:29 (03/09/2016) on core
-%% Last Modification of hyp_notify.erl at 16:04:33 (16/06/2017) on core
+%% Last Modification of hyp_notify.erl at 11:16:21 (29/09/2017) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -275,6 +275,7 @@ prepare(undefined, #state{ roomref=Fqid, creator=_Userid, users=_Users } = State
 
 prepare(Type, #state{ roomref=Fqid, creator=Userid, users=Users } = State) when 
     Type =:= <<"conversationgroup">>;
+    Type =:= <<"classconversation">>;
     Type =:= <<"conversation">>;
     Type =:= <<"comgroup">>;
     Type =:= <<"obclive">>;

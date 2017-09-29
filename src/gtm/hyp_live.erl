@@ -1,6 +1,6 @@
 -module(hyp_live).
 % Created hyp_live.erl the 13:33:37 (01/01/2015) on core
-%% Last Modification of hyp_live.erl at 16:49:36 (16/06/2017) on core
+%% Last Modification of hyp_live.erl at 11:00:28 (29/09/2017) on core
 % 
 % Author: "rolph" <rolphin@free.fr>
 
@@ -396,6 +396,7 @@ prepare(undefined, #state{ roomref=Fqid, creator=_Userid } = State) ->
 
 prepare(Type, #state{ roomref=Fqid, creator=Userid, users=Users } = State) when 
     Type =:= <<"conversationgroup">>;
+    Type =:= <<"classconversation">>;
     Type =:= <<"conversation">>;
     Type =:= <<"comgroup">>;
     Type =:= <<"obclive">>;
@@ -418,25 +419,25 @@ prepare(Type, #state{ roomref=Fqid, creator=Userid, users=Users } = State) when
             {stop, Error}
     end;
 
-prepare(Type, #state{ roomref=Fqid, creator=Userid, users=Users } = State) when 
-    Type =:= <<"conversationgroup">>;
-    Type =:= <<"conversation">> ->
-
-    case hyp_data:action(Userid, Fqid, <<"members">>, []) of
-
-        {ok, {_Infos, Subscriber}} when is_binary(Subscriber) ->
-            NewUsers = gb_trees:enter(Subscriber, undefined, Users),
-            {ok, init, State#state{ users=NewUsers }, 0};
-
-        {ok, {_Infos, Subscribers}} when is_list(Subscribers) ->
-            NewUsers = lists:foldl( fun( Id, Tree ) ->
-                gb_trees:enter(Id, undefined, Tree)
-            end, Users, Subscribers),
-            {ok, init, State#state{ users=NewUsers }, 0};
-    
-        {error, Error} ->
-            {stop, Error}
-    end;
+% prepare(Type, #state{ roomref=Fqid, creator=Userid, users=Users } = State) when 
+%     Type =:= <<"conversationgroup">>;
+%     Type =:= <<"conversation">> ->
+% 
+%     case hyp_data:action(Userid, Fqid, <<"members">>, []) of
+% 
+%         {ok, {_Infos, Subscriber}} when is_binary(Subscriber) ->
+%             NewUsers = gb_trees:enter(Subscriber, undefined, Users),
+%             {ok, init, State#state{ users=NewUsers }, 0};
+% 
+%         {ok, {_Infos, Subscribers}} when is_list(Subscribers) ->
+%             NewUsers = lists:foldl( fun( Id, Tree ) ->
+%                 gb_trees:enter(Id, undefined, Tree)
+%             end, Users, Subscribers),
+%             {ok, init, State#state{ users=NewUsers }, 0};
+%     
+%         {error, Error} ->
+%             {stop, Error}
+%     end;
 
 
 % inform the parent (owner) of this drop that a new element has been added
