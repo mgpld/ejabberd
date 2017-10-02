@@ -557,6 +557,7 @@ authorized({action, SeqId, <<"ping">>}, StateData) ->
     seqid(1),
     fsm_next_state(authorized, StateData);
 
+%% @doc FIXME Supervisor mode.
 authorized({action, SeqId, <<"supervise">>}, StateData) ->
     Answer = make_answer(SeqId, [{<<"status">>, <<"ok">>}]),
     send_element(StateData, Answer),
@@ -777,7 +778,6 @@ authorized({action, SeqId, Args}, StateData) when is_list(Args) ->
                 fsm_next_state(authorized, StateData)
            end;
 
-        % NEW API v2 'contact'
         <<"contact">> ->
             case fxml:get_attr_s(<<"operation">>, Args) of
                 <<>> ->
@@ -788,7 +788,6 @@ authorized({action, SeqId, Args}, StateData) when is_list(Args) ->
                     fsm_next_state(authorized, StateData)
             end;
 
-        % NEW API v2 'profile'
         <<"profile">> ->
             case fxml:get_attr_s(<<"operation">>, Args) of
                 <<>> ->
@@ -948,11 +947,6 @@ authorized({action, SeqId, Args}, StateData) when is_list(Args) ->
                     handle(Type, Operation, SeqId, Args, StateData),
                     fsm_next_state(authorized, StateData)
             end
-
-        %_Any ->
-        %    ?ERROR_MSG(?MODULE_STRING " Unhandled action: ~p\n~p", [_Any, Args]),
-        %    fsm_next_state(authorized, StateData)
-
     end;
 
 authorized({message, SeqId, Args}, StateData) ->
@@ -1025,7 +1019,6 @@ authorized({message, SeqId, Args}, StateData) ->
     end;
 
 authorized({invite, _SeqId, Args}, StateData) ->
-
     case fxml:get_attr_s(<<"discussionid">>, Args) of 
         <<>> ->
             fsm_next_state(authorized, StateData);
@@ -1537,6 +1530,7 @@ send_element(StateData, Element) ->
     %Json = sockjs_json:encode(Element),
     %send_text(StateData, Json).
 
+%% @doc Create a packet to be sent to the wire.
 make_packet(StateData, Type, Args) ->
     [{<<"message">>, [
         {<<"type">>, Type},
@@ -4000,6 +3994,7 @@ handle_message({game, eof}, From, _To, State) ->
     Packet = (Data),
     {ok, Packet};
     
+%% @doc Handing realtime chat messages.
 handle_message({chat, {Msgid, Message}}, #jid{user=Ref} = _From, _To, State) ->
     Packet = [{<<"message">>, [
                 {<<"type">>,<<"chat">>},
@@ -4010,6 +4005,7 @@ handle_message({chat, {Msgid, Message}}, #jid{user=Ref} = _From, _To, State) ->
             ]}],
     {ok, Packet};
 
+%% @doc Handing realtime notification messages.
 handle_message({notification, {Msgid, Message}}, #jid{user=Ref} = _From, _To, State) ->
     Packet = [{<<"message">>, [
                 {<<"type">>,<<"notification">>},
@@ -4020,7 +4016,7 @@ handle_message({notification, {Msgid, Message}}, #jid{user=Ref} = _From, _To, St
             ]}],
     {ok, Packet};
 
-% the message Child must be deleted
+%% @doc Handling realtime delete events messages.
 handle_message({event, {Msgid, {delete, Child}}}, From, _To, State) ->
     #jid{lresource=Ref} = From,
     Data = [{<<"message">>, [
@@ -4035,6 +4031,7 @@ handle_message({event, {Msgid, {delete, Child}}}, From, _To, State) ->
     Packet = (Data),
     {ok, Packet};
 
+%% @doc Handling realtime generic events messages.
 handle_message({event, {Msgid, Message}}, From, _To, State) ->
     #jid{lresource=Ref} = From,
     Data = [{<<"message">>, [
@@ -4047,7 +4044,7 @@ handle_message({event, {Msgid, Message}}, From, _To, State) ->
     Packet = (Data),
     {ok, Packet};
 
-% synchronization: notifying client the need for synchronization
+%% @doc Synchronization: notifying client the need for synchronization (UNUSED).
 handle_message({sync, Property}, _From, _To, _State) ->
     Data = [{<<"message">>, [
                 {<<"type">>,<<"sync">>},
@@ -4662,7 +4659,7 @@ delivered_notification(#state{user=_Username, sid=_Sid, userid=Userid, server=Se
     Result :: binary() | list() ) -> ok.
 
 action_trigger(State, Element, Infos, Action, Args, Result) ->
-    case args(Infos, [49]) of % extract the type of element i.e. group or thread or message ...
+    case args(Infos, [49]) of % extract the type of element (code is 49) i.e. group or thread or message ...
         [ Type ] ->
             action(State, Element, Type, Action, Args, Result);
         [] ->
@@ -4745,15 +4742,28 @@ action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, E
         { <<"child">>, Child}]),
     mod_chat:route(Host, Element, Creator, message, Packet);
 
+%% @doc Conversationgroup.
 action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, Element, Type, <<"addChild">>, [Child], [Count]) when 
-    Type =:= <<"obclive">>;
-    Type =:= <<"conversation">>;
-    Type =:= <<"classconversation">>;
     Type =:= <<"conversationgroup">> ->
 
     RoomType = 0,
     mod_chat:create_room(Host, RoomType, Creator, Element, []), % this will create synchronously the room if needed
     Packet = make_packet( _State, <<"add">>, [
+        { <<"parent">>, Element},
+        { <<"count">>, Count},
+        { <<"child">>, Child}]),
+    mod_chat:route(Host, Element, Creator, message, Packet);
+
+%% @doc Education applications.
+action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, Element, Type, <<"addChild">>, [Child], [Count]) when 
+    Type =:= <<"obclive">>;
+    Type =:= <<"conversation">>;
+    Type =:= <<"classconversation">> ->
+
+    RoomType = 0,
+    mod_chat:create_room(Host, RoomType, Creator, Element, []), % this will create synchronously the room if needed
+    Packet = make_packet( _State, <<"add">>, [
+        { <<"category">>, <<"education">>},
         { <<"parent">>, Element},
         { <<"count">>, Count},
         { <<"child">>, Child}]),
@@ -4795,7 +4805,6 @@ action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, E
     end;
 
 %% @doc realtime messages for article childs FEATURE IS POSTPONED.
-%%
 action(#state{user=Username, userid=Creator, server=Host} = _State, Element, Type, <<"addChild">>, [Child], [Count]) when
     Type =:= <<"article">> ->
 
@@ -4810,10 +4819,12 @@ action(#state{user=Username, userid=Creator, server=Host} = _State, Element, Typ
     mod_chat:route(Host, Element, Creator, message, Packet), % send the message
     mod_chat:route(Host, Element, Creator, add, [Creator]); % add the author after adding it to members (author will not be parasited by the rt message)
 
+%% @doc Default for action handlers.
 action(#state{user=_Username, sid=_Sid} = _State, _Element, _Type, _Action, _Args, _Result) ->
     ?DEBUG(?MODULE_STRING "[~5w] default: action on type '~p': Element: '~p' Action: '~p' Args: '~p' Result: '~p'", [ ?LINE, _Type, _Element, _Action, _Args, _Result ]),
     ok.
 
+%% @doc Helper.
 ok( Do, Success ) ->
     case Do() of
         {ok, true} ->
@@ -4822,6 +4833,9 @@ ok( Do, Success ) ->
             _Any
     end.
 
+%% @doc Generic handlers for incoming messages.
+
+%% @doc Handling subscriptions.
 handle(<<"subscriptions">> = Type, Operation, SeqId, Args, State) ->
     case subscription_operations(Operation) of
         false ->
