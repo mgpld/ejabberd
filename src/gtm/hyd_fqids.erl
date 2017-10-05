@@ -226,17 +226,17 @@ action_async(TransId, Type, Method, Args) ->
 
 do_action_async(TransId, Type, <<"create">>, Args) ->
     FilteredArgs = lists:map(fun hyd:quote/1, Args),
-    ?DEBUG("action.~p: create ~p ~p", [ TransId, Type, FilteredArgs ]),
+    ?DEBUG(?MODULE_STRING "[~5w] action.~p: create ~p ~p", [ ?LINE, TransId, Type, FilteredArgs ]),
     db:cast(TransId, <<"create">>, module(), [ Type | FilteredArgs ]);
 
 do_action_async(TransId, _, read, Args) ->
     FilteredArgs = lists:map(fun hyd:quote/1, Args),
-    ?DEBUG("action.~p: read ~p", [ TransId,  FilteredArgs ]),
+    ?DEBUG(?MODULE_STRING "[~5w] action.~p: read ~p", [ ?LINE, TransId,  FilteredArgs ]),
     db:cast(TransId, <<"read">>, module(), FilteredArgs);
 
 do_action_async(TransId, Any, Action, Args) ->
     FilteredArgs = lists:map(fun hyd:quote/1, Args),
-    ?DEBUG("action.~p: Any: ~p Action: ~p Args: ~p", [ TransId, Any, Action, FilteredArgs ]),
+    ?DEBUG(?MODULE_STRING "[~5w] action.~p: Any: ~p Action: ~p Args: ~p", [ ?LINE, TransId, Any, Action, FilteredArgs ]),
     db:cast(TransId, <<"action">>, module(), [ Any, Action | FilteredArgs ]).
 
 %% @doc Generic call runner.
@@ -289,11 +289,11 @@ parse_indexed(Op) ->
             {ok, []};
 
         [{error, _} = Error | _] ->
-            ?ERROR_MSG("Backend Error: ~p", [ Error ]),
+            ?ERROR_MSG(?MODULE_STRING "[~5w] Backend Error: ~p", [?LINE, Error ]),
             Error;
 
         [{_Index, _} | _] = Result ->
-            ?DEBUG("Result: ~p", [Result]),
+            ?DEBUG(?MODULE_STRING "[~5w] Result: ~p", [?LINE, Result]),
             Inversed = lists:map(fun({_,V}) ->
                 V
             end, Result),
@@ -301,7 +301,7 @@ parse_indexed(Op) ->
 
         _Error ->
             % FIXME handle _Error
-            ?ERROR_MSG("Error: ~p", [ _Error ]),
+            ?ERROR_MSG(?MODULE_STRING "[~5w] Error: ~p", [ ?LINE, _Error ]),
             internal_error(161)
     end.
 

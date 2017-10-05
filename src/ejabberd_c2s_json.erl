@@ -298,11 +298,13 @@ init([{SockMod, Socket}, Opts]) ->
 
     Zlib = lists:member(zlib, Opts),
     IP = peerip(SockMod, Socket),
+    ?DEBUG(?MODULE_STRING "[~5w] Ip: ~p\n", [ ?LINE, IP ]),
+
     %% Check if IP is blacklisted:
     case is_ip_blacklisted(IP) of
         true ->
-            ?INFO_MSG(?MODULE_STRING " Connection attempt from blacklisted IP: ~s (~w)",
-                  [jlib:ip_to_list(IP), IP]),
+            ?INFO_MSG(?MODULE_STRING "[~5w] Connection attempt from blacklisted IP: ~s (~w)",
+                  [ ?LINE, jlib:ip_to_list(IP), IP]),
             {stop, normal};
 
         false ->
@@ -344,7 +346,8 @@ session_established({login, SeqId, Args}, StateData) ->
     Id = fxml:get_attr_s(<<"id">>, Args),
     Password = fxml:get_attr_s(<<"pass">>, Args),
     %Token = fxml:get_attr_s(<<"token">>, Args), %% Token is for rebinding or login
-    Now = os:timestamp(),
+    %Now = os:timestamp(),
+    Now = snaptime(),
     
     SID = {Now, self()},
     Conn = get_conn_type(StateData),
@@ -412,7 +415,7 @@ session_established({login, SeqId, Args}, StateData) ->
                     ]}
                 }]),
             send_element(TmpState, (Answer)),
-            receive after 1000 -> ok end, % Sending the error packet before closing the connection
+            receive after 1000 -> ok end, %% @doc Fake delay, let this packet go beforce closing the connection...
             ?ERROR_MSG(?MODULE_STRING "[~5w] Problem retrieving userid: ~p", [ ?LINE, Reason ]),
             {stop, normal, TmpState#state{ jid = IdJid }};
 
@@ -491,6 +494,11 @@ session_established({action, SeqId, Args}, State) when is_list(Args) ->
             
         <<"login">> = Operation->
             ?DEBUG(?MODULE_STRING "[~5w] Login with args: ~p", [ ?LINE, Args ]),
+            NewState = handle_query(Operation, SeqId, Args, State),
+            fsm_next_state(session_established, NewState);
+
+        <<"about">> = Operation->
+            ?DEBUG(?MODULE_STRING "[~5w] About with args: ~p", [ ?LINE, Args ]),
             NewState = handle_query(Operation, SeqId, Args, State),
             fsm_next_state(session_established, NewState);
 
@@ -621,10 +629,6 @@ authorized({action, SeqId, Args}, StateData) when is_list(Args) ->
             end;
 
         <<"new-discussion">> ->
-            %DiscussionId = integer_to_list(erlang:phash2(os:timestamp(), 999999999), 5),
-            %Discussion = list_to_binary(DiscussionId),
-            %Discussion = base64:encode(term_to_binary(os:timestamp())),
-            
             % FIXME need a cleanup process when a room pg2 group is no longuer needed !
             RoomId = 0,
             %?DEBUG(?MODULE_STRING " Room: New room: ~p", [ RoomId ]),
@@ -635,7 +639,7 @@ authorized({action, SeqId, Args}, StateData) when is_list(Args) ->
             ?DEBUG(?MODULE_STRING " Creating the room: '~p' on '~p' owner: ~p", [ Ref, Host, UserName ]),
             mod_chat:create_room(Host, RoomId, UserName, Ref, []),
 
-            %% FIXME new-discussion is not javascript friendly name
+            %% FIXME 'new-discussion' is not javascript friendly name
             Answer = make_answer(SeqId, [{<<"new-discussion">>, Ref}]),
             send_element(StateData, (Answer)),
 
@@ -643,28 +647,28 @@ authorized({action, SeqId, Args}, StateData) when is_list(Args) ->
 
         <<"configuration">> ->
             case  fxml:get_attr_s(<<"id">>, Args) of
-            <<>> ->
-                case fxml:get_attr_s(<<"operation">>, Args) of
-                    <<"list">> ->
-                        case handle_configuration(list, undefined, Args, StateData) of
-                            {[], _} ->
-                                Answer = make_answer_not_found(SeqId),
-                                send_element(StateData, Answer),
-                                fsm_next_state(authorized, StateData);
+                <<>> ->
+                    case fxml:get_attr_s(<<"operation">>, Args) of
+                        <<"list">> ->
+                            case handle_configuration(list, undefined, Args, StateData) of
+                                {[], _} ->
+                                    Answer = make_answer_not_found(SeqId),
+                                    send_element(StateData, Answer),
+                                    fsm_next_state(authorized, StateData);
 
-                            {Result, _} ->
-                                %?DEBUG(?MODULE_STRING " handle_configuration: result: ~p", [ Result ]),
-                                Answer = make_answer(SeqId, [{<<"result">>, Result}]),
-                                send_element(StateData, (Answer)),
-                                fsm_next_state(authorized, StateData);
+                                {Result, _} ->
+                                    %?DEBUG(?MODULE_STRING " handle_configuration: result: ~p", [ Result ]),
+                                    Answer = make_answer(SeqId, [{<<"result">>, Result}]),
+                                    send_element(StateData, (Answer)),
+                                    fsm_next_state(authorized, StateData);
 
-                            _ ->
-                                fsm_next_state(authorized, StateData)
-                        end;
+                                _ ->
+                                    fsm_next_state(authorized, StateData)
+                            end;
 
-                    _ ->
-                        fsm_next_state(authorized, StateData)
-                end;
+                        _ ->
+                            fsm_next_state(authorized, StateData)
+                    end;
 
             Id ->
                 case handle_configuration(Id, Args, StateData) of
@@ -695,8 +699,8 @@ authorized({action, SeqId, Args}, StateData) when is_list(Args) ->
                     _ ->
                         fsm_next_state(authorized, StateData)
                 end
-	        end;
-	
+            end;
+
         <<"visibility">> ->
             case  fxml:get_attr_s(<<"id">>, Args) of
                 <<>> ->
@@ -4954,12 +4958,26 @@ handle_operation(Type, SeqId, Response, State) ->
             send_element(State, Answer)
     end.
 
+handle_query(<<"about">> = Operation, SeqId, Args, State) ->
+    case args(Args, [<<"userid">>]) of
+        [ Element ] = Params ->
+            ?DEBUG(?MODULE_STRING "[~5w] handle_Action: operation: ~p, on Element: ~p", [ ?LINE, Operation, Element] ),
+            Module = <<"init">>, % specific module for pre authorized calls.
+            hyd_fqids:action_async(SeqId, Module, Operation, Params),
+            Actions = State#state.aux_fields,
+            State#state{aux_fields=[{SeqId, [ snaptime(), Element, Operation, Params ]} | Actions ]};
 
-handle_query(Operation, SeqId, Args, State) ->
+        _ ->
+            Answer = make_error(SeqId, 406, <<"invalid call (about)">>),
+            send_element(State, Answer),
+            State
+    end;
+
+handle_query(<<"login">> = Operation, SeqId, Args, State) ->
     case args(Args, [<<"to">>]) of
         [ Element ] = Params ->
             ?DEBUG(?MODULE_STRING "[~5w] handle_Action: operation: ~p, on Element: ~p", [ ?LINE, Operation, Element] ),
-            Module = <<"init">>, % specific module for initialisation
+            Module = <<"init">>, % specific module for pre authorized calls.
             hyd_fqids:action_async(SeqId, Module, Operation, [ 0 | Params ]),
             Actions = State#state.aux_fields,
             State#state{aux_fields=[{SeqId, [ snaptime(), Element, Operation, Params ]} | Actions ]};
@@ -5025,5 +5043,5 @@ string_to_jid(Data) ->
     end.
 
 snaptime() ->
-    os:system_time(1000000).
+    os:system_time().
 

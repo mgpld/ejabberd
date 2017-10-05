@@ -100,34 +100,34 @@ do_poll(_Pid, _, 0) ->
 do_poll(Pid, Fun, Count) ->
     case gen_server:call( Pid, poll, infinity ) of
         {ok, {Operation, {Date, Timeout}, Client} = _Args} ->
-            ?DEBUG(?MODULE_STRING ".~p ~p ** will handle : ~p instance ~p.\n", [ ?LINE, self(), _Args, Count ]),
+            ?DEBUG(?MODULE_STRING "[~5w] ~p ** will handle : ~p instance ~p.\n", [ ?LINE, self(), _Args, Count ]),
             case expired(Date, Timeout) of
                 false -> 
-                    %?DEBUG("(~p) Handle query ~p for client ~p : ~p\n", [ self(), Operation, Client, calendar:now_to_local_time(Date) ]),
+                    %?DEBUG(?MODULE_STRING "[~5w] ~p Handle query ~p for client ~p : ~p\n", [ ?LINE, self(), Operation, Client, calendar:now_to_local_time(Date) ]),
                     Result = Fun( Operation ),
                     gen_server:reply( Client, Result),
                     do_poll(Pid, Fun, Count - 1);
 
                 true ->
-                    %?DEBUG("(~p) Drop query ~p for client ~p because of expiration, try another\n", [ self(), Operation, Client ]),
+                    %?DEBUG(?MODULE_STRING "[~5w] ~p Drop query ~p for client ~p because of expiration, try another\n", [ ?LINE, self(), Operation, Client ]),
                     do_poll(Pid, Fun, Count  - 1)
             end;
 
         {ok, {Operation, Client} = _Args} when is_tuple(Client) ->
-            %?DEBUG("** gen_server will handle : ~p instance ~p", [ ?LINE, self(), _Args, Count ]),
+            %?DEBUG(?MODULE_STRING "[~5w] ** gen_server will handle : ~p instance ~p", [ ?LINE, self(), _Args, Count ]),
             Result = Fun( Operation ),
             gen_server:reply( Client, Result),
-            %?DEBUG(?MODULE_STRING ".~p ~p ** gen_server     handled : ~p in ~p ns\n", [ ?LINE, self(), _Args, timer:now_diff(os:timestamp(), Start) ]),
+            %?DEBUG(?MODULE_STRING "[~5w] ~p ** gen_server     handled : ~p in ~p ns\n", [ ?LINE, self(), _Args, timer:now_diff(os:timestamp(), Start) ]),
             do_poll(Pid, Fun, Count - 1);
 
         {ok, Operation, Client, TransId} when is_pid(Client) ->
-            %?DEBUG("** async.     will handle : ~p, client: ~p, transid: ~p, round ~p.\n", [ Operation, Client, TransId, Count ]),
+            %?DEBUG(?MODULE_STRING "[~5w] ** async.     will handle : ~p, client: ~p, transid: ~p, round ~p.\n", [ ?LINE, Operation, Client, TransId, Count ]),
             Result = Fun({call, Operation}),
             Client ! {db, TransId, Result},
             do_poll(Pid, Fun, Count - 1);
 
         _Any ->
-            ?DEBUG(?MODULE_STRING ".~p (~p) Err: ~p\n", [ ?LINE, self(), _Any ])
+            ?DEBUG(?MODULE_STRING "[~5w] ~p Err: ~p\n", [ ?LINE, self(), _Any ])
     end.
 
 % Callback Calls
@@ -175,17 +175,17 @@ handle_call(Query, From, State) when is_tuple(Query) ->
     handle_call({ Query, 5000 }, From, State);
 
 handle_call(_Query, _Node, State) ->
-    ?DEBUG(?MODULE_STRING ".~p Catchall: ~p\n", [ ?LINE, _Query ]),
+    ?DEBUG(?MODULE_STRING "[~5w] Catchall: ~p\n", [ ?LINE, _Query ]),
     {reply, undefined, State}.
 
 % Callback Casts
 handle_cast({Client, [ TransId | Operation ]}, #state{childs=[Child | Rest], queries=Queries} = State) ->
-    ?DEBUG("handle_cast: Client: ~p, TransId: ~p, Operation: ~p", [ Client, TransId, Operation ]),
+    ?DEBUG(?MODULE_STRING "[~5w] handle_cast: Client: ~p, TransId: ~p, Operation: ~p", [ ?LINE, Client, TransId, Operation ]),
     gen_server:reply(Child, {ok, Operation, Client, TransId}), 
     {noreply, State#state{childs=Rest, queries=Queries+1}};
 
 handle_cast({Client, [ TransId | Operation ]}, #state{childs=[], queue=Q, miss=Miss} = State) ->
-    ?DEBUG("handle_cast: AddToQueue Client: ~p, TransId: ~p, Operation: ~p", [ Client, TransId, Operation ]),
+    ?DEBUG(?MODULE_STRING "[~5w] handle_cast: AddToQueue Client: ~p, TransId: ~p, Operation: ~p", [ ?LINE, Client, TransId, Operation ]),
     Item = {cast, Operation, Client, TransId},
     NewQ = queue:in(Item, Q),
     {noreply, State#state{ queue=NewQ, miss=Miss+1 }};
