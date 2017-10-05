@@ -1,6 +1,6 @@
 -module(gtmworker_srv).
 % Created gtmworker_srv.erl the 02:17:02 (16/06/2014) on core
-% Last Modification of gtmworker_srv.erl at 23:41:18 (01/02/2017) on core
+%% Last Modification of gtmworker_srv.erl at 08:39:47 (05/10/2017) on core
 %
 % Author: "rolph" <rolphin@free.fr>
 
@@ -177,7 +177,6 @@ q(Node, Module, Key, Value) ->
 
 q(Code, Args, Node) ->
     Query = make_query(Args),
-    %io:format("DEBUG: Query: ~p\n", [ iolist_to_binary(Query) ]),
     {true, Node} ! {Code, self(), Query},
     receive
         _Any ->
