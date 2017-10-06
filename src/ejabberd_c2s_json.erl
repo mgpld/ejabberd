@@ -4071,6 +4071,13 @@ handle_message(Message, _From, _To, _) ->
 
 userid(State, User, Server, Password) ->
     case data_specific(State, hyd_users, userid, [User,Server,Password]) of
+        {error, {_Operation, {timeout, _Call}}} ->
+            ?DEBUG(?MODULE_STRING "[~5w] retry userid for ~w", [ ?LINE, User ]),
+            userid(State, User, Server, Password);
+
+        {error, {_Operation, _Reason}} ->
+            {error, invalid};
+
         [] ->
             {error, invalid};
 
