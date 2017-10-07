@@ -4999,9 +4999,12 @@ handle_operation(Type, SeqId, Response, State) ->
 
 handle_query(<<"about">> = Operation, SeqId, Args, State) ->
     case args(Args, [<<"userid">>]) of
-        [ Element ] = Params ->
+        [ Element ] ->
             ?DEBUG(?MODULE_STRING "[~5w] handle_Action: operation: ~p, on Element: ~p", [ ?LINE, Operation, Element] ),
             Module = <<"init">>, % specific module for pre authorized calls.
+            {Ip, _Port} = State#state.ip,
+            Userip = list_to_binary(fmt_ip(Ip)),
+            Params = [ Element, Userip ],
             hyd_fqids:action_async(SeqId, Module, Operation, Params),
             Actions = State#state.aux_fields,
             State#state{aux_fields=[{SeqId, [ snaptime(), Element, Operation, Params ]} | Actions ]};
