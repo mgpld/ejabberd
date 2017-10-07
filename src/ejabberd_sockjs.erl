@@ -235,7 +235,7 @@ init([Conn]) ->
     Socket = {sockjs, self(), Conn},
     Opts = [],
     {ok, C2SPid} = ejabberd_c2s_json:start_link({?MODULE, Socket}, Opts),
-    ?DEBUG(?MODULE_STRING "[~5w] Sockjs session started: Client pid : ~p", [ ?LINE, C2SPid]),
+    ?DEBUG(?MODULE_STRING "[~5w] Sockjs session started: Client pid: ~p, Connection: ~p", [ ?LINE, C2SPid, Conn]),
     {ok, #state{conn=Conn, c2s_pid=C2SPid}}.
 
 handle_call(_Msg, _From, State) ->
@@ -316,7 +316,7 @@ start_app(App) ->
 parse(Json) ->
     to_event(Json).
 
-%% JSON PACKET are identified by their type and by a specific Id
+%% @doc JSON PACKET are identified by their type and by a specific Id.
 %% This id is meant to be resent in the response (if any) to be handled
 %% by the javascript client side to execute a callback if any...
 to_event({struct, [{Type, Args}, {<<"id">>, Id}]}) ->

@@ -286,7 +286,7 @@ stop(FsmRef) ->
 %%          {stop, StopReason}
 %%----------------------------------------------------------------------
 init([{SockMod, Socket}, Opts]) ->
-    %?DEBUG(?MODULE_STRING " Init SockMod: ~p Socket: ~p, Opts: ~p", [ SockMod, Socket, Opts ]),
+    ?DEBUG(?MODULE_STRING "[~5w] Init SockMod: ~p Socket: ~p, Opts: ~p", [ ?LINE, SockMod, Socket, Opts ]),
     Access = case lists:keysearch(access, 1, Opts) of
         {value, {_, A}} -> A;
         _ -> all
@@ -300,6 +300,10 @@ init([{SockMod, Socket}, Opts]) ->
     IP = peerip(SockMod, Socket),
     ?DEBUG(?MODULE_STRING "[~5w] Ip: ~p\n", [ ?LINE, IP ]),
 
+    RealPeer = realip(SockMod, Socket, IP),
+    ?DEBUG(?MODULE_STRING "[~5w] RealIp: ~p\n", [ ?LINE, RealPeer ]),
+
+    %% @doc FIXME should use RealIP.
     %% Check if IP is blacklisted:
     case is_ip_blacklisted(IP) of
         true ->
@@ -326,7 +330,7 @@ init([{SockMod, Socket}, Opts]) ->
                 timeout        = ?C2S_AUTHORIZED_TIMEOUT,
                 access         = Access,
                 shaper         = Shaper,
-                ip             = IP}, ?C2S_OPEN_TIMEOUT}
+                ip             = RealPeer}, ?C2S_OPEN_TIMEOUT}
     end.
 
 %% Return list of all available resources of contacts,
@@ -1587,27 +1591,55 @@ get_showtag(undefined) ->
     "unavailable";
 get_showtag(Presence) ->
     case fxml:get_path_s(Presence, [{elem, "show"}, cdata]) of
-	""      -> "available";
-	ShowTag -> ShowTag
+        ""      -> "available";
+        ShowTag -> ShowTag
     end.
 
 get_statustag(undefined) ->
     "";
 get_statustag(Presence) ->
     case fxml:get_path_s(Presence, [{elem, "status"}, cdata]) of
-	ShowTag -> ShowTag
+        ShowTag -> ShowTag
     end.
 
 peerip(SockMod, Socket) ->
     IP = case SockMod of
-	     gen_tcp -> inet:peername(Socket);
-	     _ -> SockMod:peername(Socket)
-	 end,
+        gen_tcp -> inet:peername(Socket);
+        _ -> SockMod:peername(Socket)
+    end,
     case IP of
-	{ok, IPOK} -> IPOK;
-	_ -> undefined
+        {ok, IPOK} -> IPOK;
+        _ -> undefined
     end.
 
+realip(SockMod, Socket, {_, Port} = Peer) ->
+    case SockMod of 
+        ejabberd_sockjs ->
+            {sockjs, _, Session} = Socket,
+            Infos = sockjs:info(Session),
+            case lists:keysearch(headers, 1, Infos) of
+                false ->
+                    Peer;
+
+                {value,{_,Headers}} ->
+                    %Headers = [{'x-real-ip',[57,48,46,49,49,54,46,49,55,54,46,50,50,55]},{'x-forwarded-for',[57,48,46,49,49,54,46,49,55,54,46,50,50,55]}],
+                    case lists:keysearch('x-forwarded-for', 1, Headers) of
+                        {value, {_, Real}} ->
+                            case inet_parse:address(Real) of
+                                {ok, RealIp} ->
+                                    {RealIp, Port};
+                                _ ->
+                                    Peer
+                            end;
+
+                        false ->
+                            Peer
+                    end
+            end;
+
+        _ -> 
+            Peer
+    end.
 
 %% @doc fsm_next_state: Generate the next_state FSM tuple with different
 %% timeout, depending on the future state.
