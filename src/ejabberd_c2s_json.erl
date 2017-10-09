@@ -4797,10 +4797,22 @@ action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, E
         { <<"child">>, Child}]),
     mod_chat:route(Host, Element, Creator, message, Packet);
 
+%% @doc Hychat conversations.
+action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, Element, Type, <<"addChild">>, [Child], [Count]) when 
+    Type =:= <<"conversation">> ->
+
+    RoomType = 0,
+    mod_chat:create_room(Host, RoomType, Creator, Element, []), % this will create synchronously the room if needed
+    Packet = make_packet( _State, <<"add">>, [
+        { <<"category">>, <<"harmony">>},
+        { <<"parent">>, Element},
+        { <<"count">>, Count},
+        { <<"child">>, Child}]),
+    mod_chat:route(Host, Element, Creator, message, Packet);
+
 %% @doc Education applications.
 action(#state{user=_Username, sid=_Sid, userid=Creator, server=Host} = _State, Element, Type, <<"addChild">>, [Child], [Count]) when 
     Type =:= <<"obclive">>;
-    Type =:= <<"conversation">>;
     Type =:= <<"classconversation">> ->
 
     RoomType = 0,
